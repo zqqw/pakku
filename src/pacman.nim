@@ -36,7 +36,15 @@ proc calculateOptionsWithParameter(opts: seq[CommandOption]): seq[OptionKey] {.c
     else:
       @[]
 
-  lc[x | (y <- opts, x <- commandToSeq(y)), OptionKey]
+  var
+    tmp = newSeq[OptionKey]()
+    rval = newSeq[OptionKey]()
+  for i in low(opts)..high(opts):
+    tmp = commandToSeq(opts[i])
+    if tmp.len != 0:
+      for j in low(tmp)..high(tmp):
+        add(rval, tmp[j])
+  return rval
 
 proc o(long: string): CommandOption {.compileTime.} =
   ((none(string), long), false, false, {})
@@ -200,7 +208,12 @@ proc getOperation*(args: seq[Argument]): OperationType =
 proc filterOptions*(args: seq[Argument], removeMatches: bool, keepTargets: bool,
   includeOperations: bool, opts: varargs[seq[CommandOption]]): seq[Argument] =
   let optsSeq = @opts
-  let optsPairSeq = lc[x.pair | (y <- optsSeq, x <- y), OptionPair]
+  var
+    pairVal = newSeq[OptionPair]()
+  for i in low(optsSeq)..high(optsSeq):
+    for j in low(optsSeq[i])..high(optsSeq[i]):
+      add(pairVal, optsSeq[i][j].pair)
+  let optsPairSeq = pairVal
 
   let work = if includeOperations:
       (optsPairSeq & operations.map(o => o.pair))
@@ -233,17 +246,36 @@ proc `%%%`*(long: string): OptionPair =
 proc filterExtensions*(args: seq[Argument], removeMatches: bool, keepTargets: bool,
   opts: varargs[seq[CommandOption]]): seq[Argument] =
   let optsSeq = @opts
-  let optsFilter = if removeMatches:
-      lc[x | (y <- optsSeq, x <- y), CommandOption]
-    else: (block:
-      let pairs = lc[x.pair | (y <- optsSeq, x <- y), OptionPair].toHashSet
-      lc[x | (x <- allOptions, not (x.pair in pairs)), CommandOption])
+  var
+    optsFilter = newSeq[CommandOption]()
+    argsSeq = newSeq[OptionPair]()
+  if removeMatches:
+    for i in low(optsSeq)..high(optsSeq):
+      for j in low(optsSeq[i])..high(optsSeq[i]):
+        add(optsFilter, optsSeq[i][j])
+  else:
+    var
+      pairVal = newSeq[OptionPair]()
+    for i in low(optsSeq)..high(optsSeq):
+      for j in low(optsSeq[i])..high(optsSeq[i]):
+        add(pairVal, optsSeq[i][j].pair)
+    let pairs = pairVal.toHashSet
+    for i in low(allOptions)..high(allOptions):
+      if not (allOptions[i].pair in pairs):
+        add(optsFilter, allOptions[i])
 
-  let argsSeq = lc[x.pair | (x <- optsFilter, x.extension), OptionPair]
+  for i in low(optsFilter)..high(optsFilter):
+    if optsFilter[i].extension:
+      add(argsSeq, optsFilter[i].pair)
   args.filter(removeMatches, keepTargets, argsSeq)
 
 proc obtainConflictsPairs(conflicts: seq[ConflictingOptions]): Table[string, seq[OptionPair]] =
-  let all = lc[x | (y <- conflicts, x <- y.left & y.right), string].deduplicate
+  var
+    tmp = newSeq[string]()
+    all = newSeq[string]()
+  for i in low(conflicts)..high(conflicts):
+    add(tmp, conflicts[i].left & conflicts[i].right)
+  all = tmp.deduplicate
   all.map(c => (c, allOptions.filter(o => o.pair.long == c)
     .map(o => o.pair).deduplicate)).toTable
 
@@ -259,14 +291,24 @@ proc checkConflicts*(args: seq[Argument],
   let table = conflicts.obtainConflictsPairs
   template full(s: string): OptionPair = table[s][0]
 
-  lc[(c.left, w) | (c <- conflicts, args.check(c.left.full),
-    w <- c.right, args.check(w.full)), (string, string)].optFirst
+  var
+    confSeq = newSeq[(string, string)]()
+  for i in low(conflicts)..high(conflicts):
+    if args.check(conflicts[i].left.full):
+      for j in low(conflicts[i].right)..high(conflicts[i].right):
+        if args.check(conflicts[i].right[j].full):
+          add(confSeq, (conflicts[i].left, conflicts[i].right[j]))
+  confSeq.optFirst
 
 proc pacmanParams*(color: bool, args: varargs[Argument]): seq[string] =
   let colorStr = if color: "always" else: "never"
   let argsSeq = ("color", some(colorStr), ArgumentType.long) &
     @args.filter(arg => not arg.matchOption(%%%"color"))
-  lc[x | (y <- argsSeq, x <- y.collectArg), string]
+  var
+    rSeq = newSeq[string]()
+  for i in low(argsSeq)..high(argsSeq):
+    add(rSeq, argsSeq[i].collectArg)
+  return rSeq
 
 proc pacmanExecInternal(root: bool, params: varargs[string]): int =
   let exec = if root: sudoPrefix & pacmanCmd & @params else: pacmanCmd & @params
@@ -283,7 +325,11 @@ proc pacmanRun*(root: bool, color: bool, args: varargs[Argument]): int =
 
 proc pacmanValidateAndThrow(args: varargs[tuple[arg: Argument, pass: bool]]): void =
   let argsSeq = @args
-  let collectedArgs = lc[x | (y <- argsSeq, y.pass, x <- y.arg.collectArg), string]
+  var
+    collectedArgs = newSeq[string]()
+  for i in low(argsSeq)..high(argsSeq):
+    if argsSeq[i].pass:
+      add(collectedArgs, argsSeq[i].arg.collectArg)
   let code = forkWait(() => pacmanExecInternal(false, "-T" & collectedArgs))
   if code != 0:
     raise haltError(code)
@@ -346,10 +392,19 @@ proc obtainPacmanConfig*(args: seq[Argument]): PacmanConfig =
 
   let debug = args.check(%%%"debug")
   let progressBar = not args.check(%%%"noprogressbar")
-  let ignorePkgs = lc[x | (y <- getAll(%%%"ignore"),
-    x <- y.split(',')), string].toHashSet
-  let ignoreGroups = lc[x | (y <- getAll(%%%"ignoregroup"),
-    x <- y.split(',')), string].toHashSet
+  var
+    pkgsGet = newSeq[string]()
+    pkgsSeq = newSeq[string]()
+    groupsGet = newSeq[string]()
+    groupsSeq = newSeq[string]()
+  pkgsGet = getAll(%%%"ignore")
+  for i in low(pkgsGet)..high(pkgsGet):
+    add(pkgsSeq, pkgsGet[i].split(','))
+  let ignorePkgs = pkgsSeq.toHashSet
+  groupsGet = getAll(%%%"ignoregroup")
+  for i in low(groupsGet)..high(groupsGet):
+    add(groupsSeq, groupsGet[i].split(','))
+  let ignoreGroups = groupsSeq.toHashSet
 
   let hasKeyserver = forkWaitRedirect(() => (block:
     if dropPrivileges():

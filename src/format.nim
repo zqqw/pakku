@@ -1,6 +1,6 @@
 import
-  macros, options, posix, sequtils, strutils, sugar, times, unicode,
-  utils
+  macros, options, posix, sequtils, strutils, sugar, times, utils
+import unicode except strip
 
 type
   PackageLineFormat* = tuple[
@@ -106,11 +106,18 @@ proc printPackageInfo*(minPadding: int, color: bool, lines: varargs[PackageLineF
 
   proc formatTextLines(values: seq[string], forceBreak: bool): seq[string] =
     if values.len == 0:
-      @[]
+      return @[]
     elif forceBreak:
-      lc[x | (y <- values.map(s => strutils.strip(s).splitLines(lineSize)), x <- y), string]
+      var
+        tmp = newSeq[seq[string]]()
+        rval = newSeq[string]()
+      tmp = values.map(s => s.strip.splitLines(lineSize))
+      for i in low(tmp)..high(tmp):
+        for j in low(tmp[i])..high(tmp[i]):
+          rval.add (tmp[i][j])
+      return rval
     else:
-      values.map(v => strutils.strip(v)).foldl(a & "  " & b).splitLines(lineSize)
+      return values.map(v => strutils.strip(v)).foldl(a & "  " & b).splitLines(lineSize)
 
   proc formatText(values: seq[string], forceBreak: bool): string =
     let textSeq = formatTextLines(values, forceBreak)
