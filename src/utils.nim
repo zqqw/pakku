@@ -2,10 +2,10 @@ import
   hashes, options, os, posix, sequtils, strutils, sugar, tables
 
 type
-  HaltError* = object of Exception
+  HaltError* = object of CatchableError
     code*: int
 
-  CommandError* = object of Exception
+  CommandError* = object of CatchableError
     color*: Option[bool]
     error*: bool
 
@@ -211,7 +211,7 @@ proc forkWaitRedirect*(call: () -> int): tuple[output: seq[string], code: int] =
 proc getgrouplist*(user: cstring, group: Gid, groups: ptr cint, ngroups: var cint): cint
   {.importc, header: "<grp.h>".}
 
-proc setgroups*(size: csize, groups: ptr cint): cint
+proc setgroups*(size: int, groups: ptr cint): cint
   {.importc, header: "<grp.h>".}
 
 proc getUser(uid: int): User =

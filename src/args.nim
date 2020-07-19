@@ -132,7 +132,7 @@ proc splitArgs*(params: seq[string],
       else:
         input
 
-  let cycle: ParseCycle = (params.map(some) & none(string))
+  let cycle: ParseCycle = (params.mapIt(some(it)) & none(string))
     .foldl(buildArgs(a, b), (newSeq[ParseArgument](), false, false))
 
   if cycle.stdinConsumed:
