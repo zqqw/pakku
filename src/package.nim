@@ -289,8 +289,8 @@ proc parseSrcInfoName(repo: string, name: string, baseIndex: int, baseCount: int
             x.value
     else:
       lc[x.value | (x <- pairs, x.key == keyName), string]
-
-  proc kcollect(baseOnly: bool, keyName: string): seq[string] =
+  #changed the name as shadows collect macro from sugar
+  proc collectName(baseOnly: bool, keyName: string): seq[string] =
     let res = if baseOnly: @[] else: collectFromPairs(nameSeq[], keyName)
     if res.len == 0:
       collectFromPairs(baseSeq[], keyName).filter(x => x.len > 0)
@@ -298,7 +298,7 @@ proc parseSrcInfoName(repo: string, name: string, baseIndex: int, baseCount: int
       res.filter(x => x.len > 0)
 
   proc collectArch(baseOnly: bool, keyName: string): seq[PackageReference] =
-    (kcollect(baseOnly, keyName) & kcollect(baseOnly, keyName & "_" & arch))
+    (collectName(baseOnly, keyName) & collectName(baseOnly, keyName & "_" & arch))
       .map(n => parsePackageReference(n, true))
       .filter(c => c.name.len > 0)
 
@@ -315,9 +315,9 @@ proc parseSrcInfoName(repo: string, name: string, baseIndex: int, baseCount: int
   else:
     let base = lc[x.value | (x <- baseSeq[], x.key == "pkgbase"), string].optLast
 
-  let version = kcollect(true, "pkgver").optLast
-  let release = kcollect(true, "pkgrel").optLast
-  let epoch = kcollect(true, "epoch").optLast
+  let version = collectName(true, "pkgver").optLast
+  let release = collectName(true, "pkgrel").optLast
+  let epoch = collectName(true, "epoch").optLast
   when NimVersion >= "1.2":
     let versionFull = (block:collect(newSeq):
       for v in version:
@@ -328,12 +328,12 @@ proc parseSrcInfoName(repo: string, name: string, baseIndex: int, baseCount: int
     let versionFull = lc[(v & "-" & r) | (v <- version, r <- release), string].optLast
       .map(v => epoch.map(e => e & ":" & v).get(v))
 
-  let description = kcollect(false, "pkgdesc").optLast
-  let archs = kcollect(false, "arch").filter(a => a != "any")
-  let url = kcollect(false, "url").optLast
-  let licenses = kcollect(false, "license")
-  let groups = kcollect(false, "groups")
-  let pgpKeys = kcollect(true, "validpgpkeys")
+  let description = collectName(false, "pkgdesc").optLast
+  let archs = collectName(false, "arch").filter(a => a != "any")
+  let url = collectName(false, "url").optLast
+  let licenses = collectName(false, "license")
+  let groups = collectName(false, "groups")
+  let pgpKeys = collectName(true, "validpgpkeys")
 
   let baseDepends = collectArch(true, "depends")
   let depends = collectArch(false, "depends")
