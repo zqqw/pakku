@@ -1,6 +1,6 @@
 import
   options, os, re, sequtils, sets, strutils, sugar, tables, utils,
-  "wrapper/alpm"
+  "wrapper/alpm", "listcomp"
 
 type
   ConstraintOperation* {.pure.} = enum
