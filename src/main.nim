@@ -12,12 +12,11 @@ import
 
 proc execSudo*(args: seq[Argument]): int =
   when NimVersion >= "1.2":
-    execResult(sudoPrefix & getAppFilename() &
-    (block:collect(newSeq):
+    execResult(sudoPrefix & getAppFilename() & (block:collect(newSeq):
       for y in args:
         for x in y.collectArg:
           x
-    ))
+      ))
   else:
     execResult(sudoPrefix & getAppFilename() &
       lc[x | (y <- args, x <- y.collectArg), string])

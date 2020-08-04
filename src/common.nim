@@ -154,13 +154,12 @@ proc findSyncTargets*(handle: ptr AlpmHandle, dbs: seq[ptr AlpmDatabase],
     else:
       if allowGroups and target.reference.constraint.isNone:
         when NimVersion >= "1.2":
-          let groupRepo = block:
-            let tmp = collect(newSeq):
+          let groupRepo = optFirst:
+            collect(newSeq):
               for d in dbs:
                 for g in d.groups:
                   if $g.name == target.reference.name:
                     d
-            tmp.optFirst
         else:
           let groupRepo = lc[d | (d <- dbs, g <- d.groups,
             $g.name == target.reference.name), ptr AlpmDatabase].optFirst

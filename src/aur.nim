@@ -76,12 +76,11 @@ proc getRpcPackageInfos*(pkgs: seq[string], repo: string, useTimeout: bool):
               for y in parseJson(z)["results"]:
                 for x in parseRpcPackageInfo(y,repo):
                   {x.name:x}
-          block:
-            let tmp = collect(newSeq):
-              for p in pkgs:
-                for x in table.opt(p):
-                  x
-            (tmp,none(string))
+          ((block:collect(newSeq):
+            for p in pkgs:
+              for x in table.opt(p):
+                x
+          ),none(string))
         else:
           let table = lc[(x.name, x) | (z <- responses, y <- parseJson(z)["results"],
             x <- parseRpcPackageInfo(y, repo)), (string, RpcPackageInfo)].toTable
@@ -109,11 +108,10 @@ proc getAurPackageInfos*(pkgs: seq[string], repo: string, arch: string, useTimeo
           ]
 
         when NimVersion >= "1.2":
-          let deduplicated = block:
-            let tmp = collect(newSeq):
+          let deduplicated = deduplicate:
+            collect(newSeq):
               for x in rpcInfos:
                 x.base
-            tmp.deduplicate
         else:
           let deduplicated = lc[x.base | (x <- rpcInfos), string].deduplicate
 

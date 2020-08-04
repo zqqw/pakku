@@ -92,11 +92,14 @@ const
 static:
   # test only single match available
   when NimVersion >= "1.2":
-    var osSet = initHashSet[string]()
-    var repoSet = initHashSet[string]()
-    for r in packageRepos:
-      osSet.incl(r.os)
-      repoSet.incl(r.repo)
+    let osSet = collect(initHashSet):
+      for r in packageRepos:
+        for x in r.os:
+          {x}
+    let repoSet = collect(initHashSet):
+      for r in packageRepos:
+        for x in r.repo:
+          {x}
   else:
     let osSet = lc[x | (r <- packageRepos, x <- r.os), string].toHashSet
     let repoSet = lc[x | (r <- packageRepos, x <- r.repo), string].toHashSet
@@ -304,19 +307,11 @@ proc parseSrcInfoName(repo: string, name: string, baseIndex: int, baseCount: int
     references.filter(r => filterWith.filter(w => r.isProvidedBy(w, true)).len == 0)
   
   when NimVersion >= "1.2":
-#[  let base = block:
-      let tmp = newSeq[string]()
-      for x in baseSeq[]:
-        if x.key == "pkgbase":
-          tmp.add(x.value)
-      tmp.optLast
-]#
-    let base = block:
-      let tmp = collect(newSeq):
+    let base = optLast:
+      collect(newSeq):
         for x in baseSeq[]:
           if x.key == "pkgbase":
             x.value
-      tmp.optLast
   else:
     let base = lc[x.value | (x <- baseSeq[], x.key == "pkgbase"), string].optLast
 
@@ -324,17 +319,11 @@ proc parseSrcInfoName(repo: string, name: string, baseIndex: int, baseCount: int
   let release = kcollect(true, "pkgrel").optLast
   let epoch = kcollect(true, "epoch").optLast
   when NimVersion >= "1.2":
-    #tmp = newSeq[string]()
-    #for v in version:
-      #for r in release:
-        #tmp.add(v & "-" & r)
-    #let versionFull = tmp.optLast.map(v => epoch.map(e => e & ":" & v).get(v))
-    let versionFull = block:
-      let tmp = collect(newSeq):
-        for v in version:
-          for r in release:
-            (v & "-" & r)
-      tmp.optLast.map(v => epoch.map(e => e & ":" & v).get(v))
+    let versionFull = (block:collect(newSeq):
+      for v in version:
+        for r in release:
+          (v & "-" & r)
+      ).optLast.map(v => epoch.map(e => e & ":" & v).get(v))
   else:
     let versionFull = lc[(v & "-" & r) | (v <- version, r <- release), string].optLast
       .map(v => epoch.map(e => e & ":" & v).get(v))
@@ -360,8 +349,8 @@ proc parseSrcInfoName(repo: string, name: string, baseIndex: int, baseCount: int
   let info = rpcInfos.filter(i => i.name == name).optLast
 
   when NimVersion >= "1.2":
-    block:
-      let tmp = collect(newSeq):
+    optLast:
+      collect(newSeq):
         for b in base:
           for v in versionFull:
             ((repo, b, name, v, description, info.map(i => i.maintainer).flatten,
@@ -370,7 +359,6 @@ proc parseSrcInfoName(repo: string, name: string, baseIndex: int, baseCount: int
             info.map(i => i.popularity).get(0), gitUrl, gitSubdir), baseIndex,  baseCount,
             archs, url, licenses, groups, pgpKeys, depends, makeDepends, checkDepends,
             optional, provides, conflicts, replaces)
-      tmp.optLast
   else:
     lc[((repo, b, name, v, description, info.map(i => i.maintainer).flatten,
     info.map(i => i.firstSubmitted).flatten, info.map(i => i.lastModified).flatten,

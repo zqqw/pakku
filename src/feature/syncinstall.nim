@@ -249,14 +249,13 @@ proc findDependencies(config: Config, handle: ptr AlpmHandle, dbs: seq[ptr AlpmD
     aurSuccess.map(r => (r.reference, r.result.unsafeGet))).toTable
 
   when NimVersion >= "1.2":
-    let newUnsatisfied = block:
-      let tmp = collect(newSeq):
+    let newUnsatisfied = deduplicate:
+      collect(newSeq):
         for y in aurSuccess:
           for r in y.result:
             for i in r.buildPkgInfo:
               for x in i.allDepends:
                 x
-      tmp.deduplicate
   else:
     let newUnsatisfied = lc[x | (y <- aurSuccess, r <- y.result, i <- r.buildPkgInfo,
       x <- i.allDepends), PackageReference].deduplicate
@@ -279,12 +278,11 @@ proc findDependencies(config: Config, handle: ptr AlpmHandle,
   let satisfied = pkgInfos.map(p => ((p.rpc.name, none(string), none(VersionConstraint)),
     (false, p.rpc.name, some(p)))).toTable
   when NimVersion >= "1.2":
-    let unsatisfied = block:
-      let tmp = collect(newSeq):
+    let unsatisfied = deduplicate:
+      collect(newSeq):
         for i in pkgInfos:
           for x in i.allDepends:
             x
-      tmp.deduplicate
   else:
     let unsatisfied = lc[x | (i <- pkgInfos, x <- i.allDepends), PackageReference].deduplicate
   findDependencies(config, handle, dbs, satisfied, unsatisfied, @[],
@@ -673,17 +671,15 @@ proc installGroupFromSources(config: Config, commonArgs: seq[Argument],
         commonArgs.keepOnlyOptions(commonOptions) & ("D", none(string), ArgumentType.short))
 
       when NimVersion >= "1.2":
-        
-        let installParams = block:
-          let tmp = collect(newSeq):
-            for i in installWithReason:
-              for x in [i.name,i.file,i.mode]:
-                x
-          sudoPrefix & (pkgLibDir & "/install") &
+        let installParams = sudoPrefix & (pkgLibDir & "/install") &
           cacheDir & $cacheUser & $cacheGroup &
           $pacmanUpgradeParams.len & pacmanUpgradeParams &
           $pacmanDatabaseParams.len & pacmanDatabaseParams &
-          tmp
+          (block:collect(newSeq):
+            for i in installWithReason:
+              for x in [i.name,i.file,i.mode]:
+                x
+          )
       else:
         let installParams = sudoPrefix & (pkgLibDir & "/install") &
           cacheDir & $cacheUser & $cacheGroup &
@@ -760,13 +756,12 @@ proc resolveDependencies(config: Config, pkgInfos: seq[PackageInfo],
   else:
     let buildAndAurNamesSet = pkgInfos.map(i => i.rpc.name).toHashSet
     when NimVersion >= "1.2":
-      let fullPkgInfos = block:
-        let tmp = collect(newSeq):
-          for s in satisfied.values:
-            for i in s.buildPkgInfo:
-              if not (i.rpc.name in buildAndAurNamesSet):
-                i
-        (pkgInfos & tmp).deduplicatePkgInfos(config,false)
+      let fullPkgInfos = (pkgInfos & (block:collect(newSeq):
+        for s in satisfied.values:
+          for i in s.buildPkgInfo:
+            if not (i.rpc.name in buildAndAurNamesSet):
+              i
+        )).deduplicatePkgInfos(config,false)
       let additionalPacmanTargets = collect(newSeq):
         for x in satisfied.values:
           if not x.installed and x.buildPkgInfo.isNone:
@@ -787,14 +782,12 @@ proc confirmViewAndImportKeys(config: Config, basePackages: seq[seq[seq[PackageI
   if basePackages.len > 0: (block:
     let installedVersions = installed.map(i => (i.name, i.version)).toTable
     when NimVersion >= "1.2":
-      block:
-        let tmp = collect(newSeq):
-          for g in basePackages:
-            for b in g:
-              for i in b:
-                (i.rpc.name,i.rpc.repo,installedVersions.opt(i.rpc.name),i.rpc.version).PackageInstallFormat
-        printPackages(config.color, config.common.verbosePkgLists,
-          tmp.sorted((a,b) => cmp(a.name, b.name)))
+      printPackages(config.color, config.common.verbosePkgLists,(block:collect(newSeq):
+        for g in basePackages:
+          for b in g:
+            for i in b:
+              (i.rpc.name,i.rpc.repo,installedVersions.opt(i.rpc.name),i.rpc.version).PackageInstallFormat
+        ).sorted((a,b) => cmp(a.name, b.name)))
     else:
       printPackages(config.color, config.common.verbosePkgLists,
         lc[(i.rpc.name, i.rpc.repo, installedVersions.opt(i.rpc.name), i.rpc.version) |
@@ -842,12 +835,11 @@ proc confirmViewAndImportKeys(config: Config, basePackages: seq[seq[seq[PackageI
             let resultPkgInfos = reloadPkgInfos(config,
               repoPath & "/" & pkgInfos[0].rpc.gitSubdir.get("."), pkgInfos)
             when NimVersion >= "1.2":
-              let pgpKeys = block:
-                let tmp = collect(newSeq):
+              let pgpKeys = deduplicate:
+                collect(newSeq):
                   for p in resultPkgInfos:
                     for x in p.pgpKeys:
                       x
-                tmp.deduplicate
             else:
               let pgpKeys = lc[x | (p <- resultPkgInfos, x <- p.pgpKeys), string].deduplicate
 
@@ -1017,16 +1009,17 @@ proc filterIgnoresAndConflicts(config: Config, pkgInfos: seq[PackageInfo],
     when NimVersion >= "1.2":
       let conflictsWith = collect(newSeq):
         for p in a:
-          if (p.rpc.name != b.rpc.name and (block:collect(newSeq):
+          if p.rpc.name != b.rpc.name and 
+              (block:collect(newSeq):
                 for c in b.conflicts:
                   if c.isProvidedBy(p.rpc.toPackageReference, true):
                     0
-              ).len>0 or (block:collect(newSeq):
+              ).len>0 or 
+              (block:collect(newSeq):
                 for c in p.conflicts:
                   if c.isProvidedBy(p.rpc.toPackageReference, true):
                     0
-              ).len>0
-              ):
+              ).len>0:
             p
     else:
       let conflictsWith = lc[p | (p <- a, p.rpc.name != b.rpc.name and

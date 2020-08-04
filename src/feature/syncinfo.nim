@@ -132,11 +132,10 @@ proc handleSyncInfo*(args: seq[Argument], config: Config): int =
       let pkgInfosTable = pkgInfos.map(i => (i.rpc.toPackageReference, i)).toTable
 
       when NimVersion >= "1.2":
-        let codes = block:
-          let tmp = collect(newSeq):
-            for x in fullTargets:
-              handleTarget(config, padding, finalArgs, x, x.rpcInfo.map(i => pkgInfosTable.opt(i.toPackageReference)).flatten)
-          code & tmp
+        let codes = code & (block:collect(newSeq):
+          for x in fullTargets:
+            handleTarget(config, padding, finalArgs, x, x.rpcInfo.map(i => pkgInfosTable.opt(i.toPackageReference)).flatten)
+          )
       else:
         let codes = code & lc[handleTarget(config, padding, finalArgs, x,
           x.rpcInfo.map(i => pkgInfosTable.opt(i.toPackageReference)).flatten) |

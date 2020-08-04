@@ -301,15 +301,15 @@ proc checkConflicts*(args: seq[Argument],
   template full(s: string): OptionPair = table[s][0]
 
   when NimVersion >= "1.3.5":
-    (block:collect(newSeq):
+    optFirst:
+      collect(newSeq):
         for c in conflicts:
           if args.check(c.left.full):
             for w in c.right:
               if args.check(w.full):
                 (c.left,w)
-      ).optFirst
   elif NimVersion >= "1.2":
-    (block:
+    optFirst:
       var tmp = newSeq[(string,string)]()
       for c in conflicts:
         if args.check(c.left.full):
@@ -317,8 +317,6 @@ proc checkConflicts*(args: seq[Argument],
             if args.check(w.full):
               tmp.add((c.left,w))
       tmp
-    ).optFirst
-      
   else:
     lc[(c.left, w) | (c <- conflicts, args.check(c.left.full),
       w <- c.right, args.check(w.full)), (string, string)].optFirst
