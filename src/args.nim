@@ -104,9 +104,14 @@ proc splitArgs*(params: seq[string],
       let argsResult = toSeq(splitSingle(current[1 .. ^1], optionsWithParameter, next))
       let consumedNext = argsResult.map(a => a.consumedNext).foldl(a or b)
       let newNext = next.filter(n => not consumedNext)
-
-      return (lc[(x.key, x.value, ArgumentType.short) | (x <- argsResult), Argument],
-        newNext, stdinConsumed, false)
+      when NimVersion >= "1.2":
+        let lc = collect(newSeq):
+          for x in argsResult:
+            (x.key,x.value,ArgumentType.short)
+        return (lc, newNext, stdinConsumed, false)
+      else:
+        return (lc[(x.key, x.value, ArgumentType.short) | (x <- argsResult), Argument],
+          newNext, stdinConsumed, false)
     else:
       return (@[(current, none(string), ArgumentType.target)], next, stdinConsumed, false)
 
@@ -139,7 +144,13 @@ proc splitArgs*(params: seq[string],
     discard close(0)
     discard open("/dev/tty", O_RDONLY)
 
-  lc[x | (y <- cycle.args, x <- y.arg), Argument]
+  when NimVersion >= "1.2":
+    collect(newSeq):
+      for y in cycle.args:
+        for x in y.arg:
+          x
+  else:
+    lc[x | (y <- cycle.args, x <- y.arg), Argument]
 
 proc isShort*(arg: Argument): bool = arg.atype == ArgumentType.short
 proc isLong*(arg: Argument): bool = arg.atype == ArgumentType.long
@@ -168,8 +179,13 @@ iterator items*(op: OptionPair): OptionKey =
 proc filter*(args: seq[Argument], removeMatches: bool, keepTargets: bool,
   pairs: varargs[OptionPair]): seq[Argument] =
   let pairsSeq = @pairs
-  let argsSet = lc[x | (y <- pairsSeq, x <- y), OptionKey].toHashSet
-
+  when NimVersion >= "1.2":
+    let argsSet = collect(initHashSet):
+      for y in pairsSeq:
+        for x in y:
+          {x}
+  else:
+    let argsSet = lc[x | (y <- pairsSeq, x <- y), OptionKey].toHashSet
   args.filter(arg => (arg.isShort and (removeMatches xor (arg.key, false) in argsSet)) or
     (arg.isLong and (removeMatches xor (arg.key, true) in argsSet)) or
     (arg.isTarget and keepTargets))

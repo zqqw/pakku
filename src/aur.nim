@@ -70,9 +70,21 @@ proc getRpcPackageInfos*(pkgs: seq[string], repo: string, useTimeout: bool):
               .foldl(a & "&arg[]=" & b)
             performString(url, useTimeout)))
 
-        let table = lc[(x.name, x) | (z <- responses, y <- parseJson(z)["results"],
-          x <- parseRpcPackageInfo(y, repo)), (string, RpcPackageInfo)].toTable
-        (lc[x | (p <- pkgs, x <- table.opt(p)), RpcPackageInfo], none(string))
+        when NimVersion >= "1.2":
+          let table = collect(initTable):
+            for z in responses:
+              for y in parseJson(z)["results"]:
+                for x in parseRpcPackageInfo(y,repo):
+                  {x.name:x}
+          ((block:collect(newSeq):
+            for p in pkgs:
+              for x in table.opt(p):
+                x
+          ),none(string))
+        else:
+          let table = lc[(x.name, x) | (z <- responses, y <- parseJson(z)["results"],
+            x <- parseRpcPackageInfo(y, repo)), (string, RpcPackageInfo)].toTable
+          (lc[x | (p <- pkgs, x <- table.opt(p)), RpcPackageInfo], none(string))
       except CurlError:
         (@[], some(getCurrentException().msg))
       except JsonParsingError:
@@ -95,7 +107,13 @@ proc getAurPackageInfos*(pkgs: seq[string], repo: string, arch: string, useTimeo
             error: Option[string]
           ]
 
-        let deduplicated = lc[x.base | (x <- rpcInfos), string].deduplicate
+        when NimVersion >= "1.2":
+          let deduplicated = deduplicate:
+            collect(newSeq):
+              for x in rpcInfos:
+                x.base
+        else:
+          let deduplicated = lc[x.base | (x <- rpcInfos), string].deduplicate
 
         proc obtainAndParse(base: string, index: int): ParseResult =
           let (srcInfo, operror) = obtainPkgBaseSrcInfo(base, useTimeout)
@@ -108,11 +126,27 @@ proc getAurPackageInfos*(pkgs: seq[string], repo: string, arch: string, useTimeo
             (pkgInfos, none(string))
 
         let parsed = deduplicated.foldl(a & obtainAndParse(b, a.len), newSeq[ParseResult]())
-        let infos = lc[x | (y <- parsed, x <- y.infos), PackageInfo]
-        let errors = lc[x | (y <- parsed, x <- y.error), string]
+        when NimVersion >= "1.2":
+          let infos = collect(newSeq):
+            for y in parsed:
+              for x in y.infos:
+                x
+          let errors = collect(newSeq):
+            for y in parsed:
+              for x in y.error:
+                x
+        else:
+          let infos = lc[x | (y <- parsed, x <- y.infos), PackageInfo]
+          let errors = lc[x | (y <- parsed, x <- y.error), string]
 
         let table = infos.map(i => (i.rpc.name, i)).toTable
-        let pkgInfos = lc[x | (p <- pkgs, x <- table.opt(p)), PackageInfo]
+        when NimVersion >= "1.2":
+          let pkgInfos = collect(newSeq):
+            for p in pkgs:
+              for x in table.opt(p):
+                x
+        else:
+          let pkgInfos = lc[x | (p <- pkgs, x <- table.opt(p)), PackageInfo]
 
         let names = rpcInfos.map(i => i.name).toHashSet
         let additionalPkgInfos = infos.filter(i => not (i.rpc.name in names))
@@ -132,7 +166,13 @@ proc findAurPackages*(query: seq[string], repo: string, useTimeout: bool):
 
           let response = performString(url, useTimeout)
           let results = parseJson(response)["results"]
-          let rpcInfos = lc[x | (y <- results, x <- parseRpcPackageInfo(y, repo)), RpcPackageInfo]
+          when NimVersion >= "1.2":
+            let rpcInfos = collect(newSeq):
+              for y in results:
+                for x in parseRpcPackageInfo(y,repo):
+                  x
+          else:
+            let rpcInfos = lc[x | (y <- results, x <- parseRpcPackageInfo(y, repo)), RpcPackageInfo]
 
           let filteredRpcInfos = if query.len > 1: (block:
               let queryLow = query[1 .. ^1].map(q => q.toLowerAscii)

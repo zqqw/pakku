@@ -31,7 +31,7 @@ proc handleSyncClean*(args: seq[Argument], config: Config): int =
       else:
         echo(tr"removing all package repositories...")
 
-      if existsDir(reposCacheDir):
+      if dirExists(reposCacheDir):
         withAlpmConfig(config, false, handle, dbs, errors):
           for e in errors: printError(config.color, e)
 

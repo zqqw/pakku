@@ -58,8 +58,9 @@ proc escape*(instance: ref CurlInstance, s: string): string =
   else:
     ""
 
-proc curlWriteMemory(mem: array[int.high, char], size: int, nmemb: int,
-  userdata: ref CurlInstance): int {.cdecl.} =
+proc curlWriteMemory(mem: array[csize_t.high, char], size: csize_t, nmemb: csize_t,
+  userdata: ref CurlInstance): csize_t {.cdecl.} =
+
   let total = size * nmemb
   if total > 0:
     userData.data &= mem[0 .. total - 1]

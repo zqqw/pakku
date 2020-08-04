@@ -131,7 +131,13 @@ proc handleSyncInfo*(args: seq[Argument], config: Config): int =
       let padding = pacmanInfoStrings.map(s => s.trp).computeMaxLength
       let pkgInfosTable = pkgInfos.map(i => (i.rpc.toPackageReference, i)).toTable
 
-      let codes = code & lc[handleTarget(config, padding, finalArgs, x,
-        x.rpcInfo.map(i => pkgInfosTable.opt(i.toPackageReference)).flatten) |
-        (x <- fullTargets), int]
+      when NimVersion >= "1.2":
+        let codes = code & (block:collect(newSeq):
+          for x in fullTargets:
+            handleTarget(config, padding, finalArgs, x, x.rpcInfo.map(i => pkgInfosTable.opt(i.toPackageReference)).flatten)
+          )
+      else:
+        let codes = code & lc[handleTarget(config, padding, finalArgs, x,
+          x.rpcInfo.map(i => pkgInfosTable.opt(i.toPackageReference)).flatten) |
+          (x <- fullTargets), int]
       codes.filter(c => c != 0).optFirst.get(0)
