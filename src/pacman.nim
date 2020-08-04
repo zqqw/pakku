@@ -300,15 +300,25 @@ proc checkConflicts*(args: seq[Argument],
   let table = conflicts.obtainConflictsPairs
   template full(s: string): OptionPair = table[s][0]
 
-  when NimVersion >= "1.2":
-    block:
-      let tmp = collect(newSeq):
+  when NimVersion >= "1.3.5":
+    (block:collect(newSeq):
         for c in conflicts:
           if args.check(c.left.full):
             for w in c.right:
               if args.check(w.full):
                 (c.left,w)
-      tmp.optFirst
+      ).optFirst
+  elif NimVersion >= "1.2":
+    (block:
+      var tmp = newSeq[(string,string)]()
+      for c in conflicts:
+        if args.check(c.left.full):
+          for w in c.right:
+            if args.check(w.full):
+              tmp.add((c.left,w))
+      tmp
+    ).optFirst
+      
   else:
     lc[(c.left, w) | (c <- conflicts, args.check(c.left.full),
       w <- c.right, args.check(w.full)), (string, string)].optFirst
@@ -340,12 +350,20 @@ proc pacmanRun*(root: bool, color: bool, args: varargs[Argument]): int =
 
 proc pacmanValidateAndThrow(args: varargs[tuple[arg: Argument, pass: bool]]): void =
   let argsSeq = @args
-  when NimVersion >= "1.2":
+  when NimVersion >= "1.3.5":
     let collectedArgs = collect(newSeq):
       for y in argsSeq:
         if y.pass:
           for x in y.arg.collectArg:
             x
+  elif NimVersion >= "1.2":
+    let collectedArgs = block:
+      var tmp = newSeq[string]()
+      for y in argsSeq:
+       if y.pass:
+         for x in y.arg.collectArg:
+           tmp.add(x)
+      tmp
   else:
     let collectedArgs = lc[x | (y <- argsSeq, y.pass, x <- y.arg.collectArg), string]
   let code = forkWait(() => pacmanExecInternal(false, "-T" & collectedArgs))

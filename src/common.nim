@@ -262,7 +262,7 @@ proc queryUnrequired*(handle: ptr AlpmHandle, withOptional: bool, withoutOptiona
     check: HashSet[string]): HashSet[string] =
     let full = results + check
 
-    when NimVersion >= "1.2":
+    when NimVersion >= "1.3.5":
       let direct = collect(newSeq):
         for y in dependsTable.namedPairs:
           if y.key in check:
@@ -274,6 +274,22 @@ proc queryUnrequired*(handle: ptr AlpmHandle, withOptional: bool, withoutOptiona
           for x in providedBy:
             if y.isProvidedBy(x.reference, true):
               {x.name}
+    elif NimVersion >= "1.2":
+      let direct = block:
+        var tmp = newSeq[PackageReference]()
+        for y in dependsTable.namedPairs:
+          if y.key in check:
+            for x in y.value:
+              if withOptional or not x.optional:
+                tmp.add(x.reference)
+        tmp
+      let indirect = block:
+        var tmp = initHashSet[string]()
+        for y in direct:
+          for x in providedBy:
+            if y.isProvidedBy(x.reference, true):
+              tmp.incl(x.name)
+        tmp
     else:
       let direct = lc[x.reference | (y <- dependsTable.namedPairs, y.key in check,
         x <- y.value, withOptional or not x.optional), PackageReference]
