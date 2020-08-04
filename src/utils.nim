@@ -211,7 +211,7 @@ proc forkWaitRedirect*(call: () -> int): tuple[output: seq[string], code: int] =
 proc getgrouplist*(user: cstring, group: Gid, groups: ptr cint, ngroups: var cint): cint
   {.importc, header: "<grp.h>".}
 
-proc setgroups*(size: csize, groups: ptr cint): cint
+proc setgroups*(size: csize_t, groups: ptr cint): cint
   {.importc, header: "<grp.h>".}
 
 proc getUser(uid: int): User =
@@ -257,8 +257,8 @@ proc dropPrivileges*(): bool =
   if initialUser.isSome:
     let user = initialUser.unsafeGet
     var groups = user.groups.map(x => x.cint)
-
-    if setgroups(user.groups.len, addr(groups[0])) < 0:
+    
+    if setgroups(cast[csize_t](user.groups.len), addr(groups[0])) < 0:
       return false
     if setgid((Gid) user.gid) != 0:
       return false
