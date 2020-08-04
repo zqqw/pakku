@@ -242,10 +242,10 @@ proc queryUnrequired*(handle: ptr AlpmHandle, withOptional: bool, withoutOptiona
       installed.add(pkg.toPackageReference)
       if pkg.reason == AlpmReason.explicit:
         explicit &= $pkg.name
-      dependsTable.add($pkg.name,
-        depends.map(x => (x, false)) + optional.map(x => (x, true)))
+      dependsTable[$pkg.name]=
+        depends.map(x => (x, false)) + optional.map(x => (x, true))
       if provides.len > 0:
-        alternatives.add($pkg.name, provides)
+        alternatives[$pkg.name]= provides
 
     (installed, explicit.toHashSet + assumeExplicit, dependsTable, alternatives)
 
