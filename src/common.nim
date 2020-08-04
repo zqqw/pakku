@@ -527,7 +527,7 @@ proc cloneBareRepo(config: Config, bareKind: BareKind, bareName: string,
 
   if forkWait(() => (block:
     if not dropPrivileges or dropPrivileges():
-      if existsDir(repoPath):
+      if dirExists(repoPath):
         let branch = branchOption.get("master")
         execResult(gitCmd, "-C", repoPath, "fetch", "-q", "--no-tags",
           "origin", branch & ":" & branch)
@@ -724,7 +724,7 @@ proc cloneAurRepo*(config: Config, base: string, gitUrl: string,
 
   if message.isSome:
     (1, message)
-  elif repoPath.existsDir():
+  elif repoPath.dirExists():
     (0, none(string))
   else:
     let fullName = bareFullName(BareKind.pkg, base)
@@ -733,7 +733,7 @@ proc cloneAurRepo*(config: Config, base: string, gitUrl: string,
 
     let cloneBareCode = forkWait(() => (block:
       if not dropPrivileges or dropPrivileges():
-        if existsDir(bareRepoPath):
+        if dirExists(bareRepoPath):
           execResult(gitCmd, "-C", bareRepoPath, "fetch", "-q", "--no-tags",
             "origin", "master:master")
         else:
