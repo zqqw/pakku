@@ -2,10 +2,10 @@ import
   hashes, options, os, posix, sequtils, strutils, sugar, tables
 
 type
-  HaltError* = object of Exception
+  HaltError* = object of CatchableError
     code*: int
 
-  CommandError* = object of Exception
+  CommandError* = object of CatchableError
     color*: Option[bool]
     error*: bool
 

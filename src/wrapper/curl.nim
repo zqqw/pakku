@@ -18,7 +18,7 @@ type
     url = 10002,
     writeFunction = 20011
 
-  CurlError* = object of Exception
+  CurlError* = object of CatchableError
 
 {.passL: "-lcurl".}
 
