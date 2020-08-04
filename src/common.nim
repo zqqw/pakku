@@ -153,8 +153,17 @@ proc findSyncTargets*(handle: ptr AlpmHandle, dbs: seq[ptr AlpmDatabase],
         return @[]
     else:
       if allowGroups and target.reference.constraint.isNone:
-        let groupRepo = lc[d | (d <- dbs, g <- d.groups,
-          $g.name == target.reference.name), ptr AlpmDatabase].optFirst
+        when NimVersion >= "1.2":
+          let groupRepo = block:
+            let tmp = collect(newSeq):
+              for d in dbs:
+                for g in d.groups:
+                  if $g.name == target.reference.name:
+                    d
+            tmp.optFirst
+        else:
+          let groupRepo = lc[d | (d <- dbs, g <- d.groups,
+            $g.name == target.reference.name), ptr AlpmDatabase].optFirst
         if groupRepo.isSome:
           return @[($groupRepo.unsafeGet.name, none(SyncFoundPackageInfo))]
 
@@ -240,18 +249,36 @@ proc queryUnrequired*(handle: ptr AlpmHandle, withOptional: bool, withoutOptiona
 
     (installed, explicit.toHashSet + assumeExplicit, dependsTable, alternatives)
 
-  let providedBy = lc[(y, x.key) | (x <- alternatives.namedPairs, y <- x.value),
-    tuple[reference: PackageReference, name: string]]
+  when NimVersion >= "1.2":
+    let providedBy = collect(newSeq):
+      for x in alternatives.namedPairs:
+        for y in x.value:
+          (reference:y,name:x.key)
+  else:
+    let providedBy = lc[(y, x.key) | (x <- alternatives.namedPairs, y <- x.value),
+      tuple[reference: PackageReference, name: string]]
 
   proc findRequired(withOptional: bool, results: HashSet[string],
     check: HashSet[string]): HashSet[string] =
     let full = results + check
 
-    let direct = lc[x.reference | (y <- dependsTable.namedPairs, y.key in check,
-      x <- y.value, withOptional or not x.optional), PackageReference]
-
-    let indirect = lc[x.name | (y <- direct, x <- providedBy,
-      y.isProvidedBy(x.reference, true)), string].toHashSet
+    when NimVersion >= "1.2":
+      let direct = collect(newSeq):
+        for y in dependsTable.namedPairs:
+          if y.key in check:
+            for x in y.value:
+              if withOptional or not x.optional:
+                x.reference
+      let indirect = collect(initHashSet):
+        for y in direct:
+          for x in providedBy:
+            if y.isProvidedBy(x.reference, true):
+              {x.name}
+    else:
+      let direct = lc[x.reference | (y <- dependsTable.namedPairs, y.key in check,
+        x <- y.value, withOptional or not x.optional), PackageReference]
+      let indirect = lc[x.name | (y <- direct, x <- providedBy,
+        y.isProvidedBy(x.reference, true)), string].toHashSet
 
     let checkNext = (direct.map(p => p.name).toHashSet + indirect) - full
     if checkNext.len > 0: findRequired(withOptional, full, checkNext) else: full
@@ -622,13 +649,29 @@ proc obtainBuildPkgInfosInternal(config: Config, bases: seq[LookupBaseGroup],
           (list[tuple[pkgInfos: seq[PackageInfo], path: Option[string]]](), 0))
 
         let pkgInfosWithPaths = pkgInfosWithPathsReversed.reversed
-        let pkgInfos = lc[x | (y <- pkgInfosWithPaths, x <- y.pkgInfos), PackageInfo]
-        let paths = lc[x | (y <- pkgInfosWithPaths, x <- y.path), string]
+        when NimVersion >= "1.2":
+          let pkgInfos = collect(newSeq):
+            for y in pkgInfosWithPaths:
+              for x in y.pkgInfos:
+                x
+          let paths = collect(newSeq):
+            for y in pkgInfosWithPaths:
+              for x in y.path:
+                x
+        else:
+          let pkgInfos = lc[x | (y <- pkgInfosWithPaths, x <- y.pkgInfos), PackageInfo]
+          let paths = lc[x | (y <- pkgInfosWithPaths, x <- y.path), string]
 
         let pkgInfosTable = pkgInfos.map(i => (i.rpc.name, i)).toTable
-
-        let foundPkgInfos = lc[x | (y <- pacmanTargetNames,
-          x <- pkgInfosTable.opt(y)), PackageInfo]
+        
+        when NimVersion >= "1.2":
+          let foundPkgInfos = collect(newSeq):
+            for y in pacmanTargetNames:
+              for x in pkgInfosTable.opt(y):
+                x
+        else:
+          let foundPkgInfos = lc[x | (y <- pacmanTargetNames,
+            x <- pkgInfosTable.opt(y)), PackageInfo]
         let errorMessages = pacmanTargetNames
           .filter(n => not pkgInfosTable.hasKey(n))
           .map(n => tr"$#: failed to get package info" % [n])
@@ -738,7 +781,13 @@ proc cloneAurReposWithPackageInfos*(config: Config, rpcInfos: seq[RpcPackageInfo
 
   let (fullPkgInfos, paths, errors) = cloneNext(0, nil, nil, nil)
   let pkgInfosTable = fullPkgInfos.map(i => (i.rpc.name, i)).toTable
-  let resultPkgInfos = lc[x | (y <- rpcInfos, x <- pkgInfosTable.opt(y.name)), PackageInfo]
+  when NimVersion >= "1.2":
+    let resultPkgInfos = collect(newSeq):
+      for y in rpcInfos:
+        for x in pkgInfosTable.opt(y.name):
+          x
+  else:
+    let resultPkgInfos = lc[x | (y <- rpcInfos, x <- pkgInfosTable.opt(y.name)), PackageInfo]
 
   let names = rpcInfos.map(i => i.name).toHashSet
   let additionalPkgInfos = fullPkgInfos.filter(i => not (i.rpc.name in names))

@@ -129,10 +129,11 @@ proc cloneAndCopy(config: Config, quiet: bool, fullTargets: seq[FullPackageTarge
         a & (pkg.base, pkg.version, b.sync.target.destination.get(pkg.base), none(string), git),
     newSeq[BaseTarget]())
 
-  let (update, terminate) = if quiet:
-      (proc (a: int, b: int) {.closure.} = discard, proc () {.closure.} = discard)
-    else:
+  let (update, terminate) = if not quiet:
       printProgressShare(config.common.progressBar, tr"cloning repositories")
+    else:
+      (proc (i0: int, i1: int) {.sideEffect,closure.} = discard, proc () {.sideEffect,closure.} = discard)
+
 
   let (results, rerrors) = cloneRepositories(config, baseTargets, update)
   terminate()

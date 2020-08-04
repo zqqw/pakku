@@ -108,7 +108,13 @@ proc printPackageInfo*(minPadding: int, color: bool, lines: varargs[PackageLineF
     if values.len == 0:
       @[]
     elif forceBreak:
-      lc[x | (y <- values.map(s => strutils.strip(s).splitLines(lineSize)), x <- y), string]
+      when NimVersion > "1.2":
+        collect(newSeq):
+          for y in values.map(s => strutils.strip(s).splitLines(lineSize)):
+            for x in y:
+              x
+      else:
+        lc[x | (y <- values.map(s => strutils.strip(s).splitLines(lineSize)), x <- y), string]
     else:
       values.map(v => strutils.strip(v)).foldl(a & "  " & b).splitLines(lineSize)
 
@@ -299,7 +305,7 @@ proc printProgressFull*(bar: bool, title: string): ((string, float) -> void, () 
 
   if not bar or width <= 0:
     echo(title, "...")
-    (proc (a: string, c: float) {.closure.} = discard, proc {.closure.} = discard)
+    (proc (a: string, c: float) {.sideEffect,closure.} = discard, proc {.sideEffect,closure.} = discard)
   else:
     let infoLen = max(width * 6 / 10, 50).int
     let progressLen = width - infoLen
@@ -309,7 +315,7 @@ proc printProgressFull*(bar: bool, title: string): ((string, float) -> void, () 
     var lastProgress = 0f
     var averageSpeed = -1f
 
-    proc update(prefix: string, progress: float) {.closure.} =
+    proc update(prefix: string, progress: float) {.sideEffect,closure.} =
       let progressTrim = max(min(1, progress + 0.005), 0)
       let progressStr = $(progressTrim * 100).int & "%"
       let paddedProgressStr = ' '.repeat(5 - progressStr.len) & progressStr
@@ -347,7 +353,7 @@ proc printProgressFull*(bar: bool, title: string): ((string, float) -> void, () 
         ' ', timeLeft, indicator, paddedProgressStr, "\x1b[0K\r")
       stdout.flushFile()
 
-    proc terminate() {.closure.} =
+    proc terminate() {.sideEffect,closure.} =
       echo()
 
     update(" ", 0)
@@ -357,7 +363,7 @@ proc printProgressFull*(bar: bool, title: string): ((string, float) -> void, () 
 proc printProgressShare*(bar: bool, title: string): ((int, int) -> void, () -> void) =
   let (updateFull, terminate) = printProgressFull(bar, title)
 
-  proc update(current: int, total: int) {.closure.} =
+  proc update(current: int, total: int) {.sideEffect,closure.} =
     let prefix = if total > 0:
         "(" & ' '.repeat(($total).len - ($current).len) & $current & "/" &
           $total & ") "
