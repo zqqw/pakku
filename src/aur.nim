@@ -1,7 +1,7 @@
 import
   json, lists, options, re, sequtils, sets, strutils, sugar, tables,
   package, utils,
-  "wrapper/curl", "listcomp"
+  "wrapper/curl"
 
 type
   AurComment* = tuple[

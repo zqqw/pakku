@@ -1,6 +1,6 @@
 import
   options, os, posix, sequtils, sets, strutils, sugar,
-  utils, "listcomp"
+  utils
 
 type
   ArgumentType* {.pure.} = enum
@@ -105,13 +105,12 @@ proc splitArgs*(params: seq[string],
       let consumedNext = argsResult.map(a => a.consumedNext).foldl(a or b)
       let newNext = next.filter(n => not consumedNext)
       when NimVersion >= "1.2":
-        let lc = collect(newSeq):
+        return((block:collect(newSeq):
           for x in argsResult:
             (x.key,x.value,ArgumentType.short)
-        return (lc, newNext, stdinConsumed, false)
+          ), newNext, stdinConsumed, false)
       else:
-        return (lc[(x.key, x.value, ArgumentType.short) | (x <- argsResult), Argument],
-          newNext, stdinConsumed, false)
+        return (lc[(x.key, x.value, ArgumentType.short) | (x <- argsResult), Argument], newNext, stdinConsumed, false)
     else:
       return (@[(current, none(string), ArgumentType.target)], next, stdinConsumed, false)
 

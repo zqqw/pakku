@@ -2,7 +2,7 @@ import
   options, posix, sequtils, strutils, sugar, tables,
   "../args", "../aur", "../common", "../config", "../format", "../package",
     "../pacman", "../utils",
-  "../wrapper/alpm", "../listcomp"
+  "../wrapper/alpm"
 
 const
   pacmanInfoStrings = [

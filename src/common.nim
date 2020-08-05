@@ -1,7 +1,7 @@
 import
   options, os, osproc, posix, sequtils, sets, strutils, sugar, tables,
   args, config, format, lists, package, pacman, utils,
-  "wrapper/alpm", "listcomp"
+  "wrapper/alpm"
 
 type
   CacheKind* {.pure.} = enum

@@ -1,6 +1,6 @@
 import
   macros, options, posix, sequtils, strutils, sugar, times, unicode,
-  utils, "listcomp"
+  utils
 
 type
   PackageLineFormat* = tuple[
