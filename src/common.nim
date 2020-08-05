@@ -1,7 +1,7 @@
 import
   options, os, osproc, posix, sequtils, sets, strutils, sugar, tables,
   args, config, format, lists, package, pacman, utils,
-  "wrapper/alpm", "listcomp"
+  "wrapper/alpm"
 
 type
   CacheKind* {.pure.} = enum
@@ -153,8 +153,12 @@ proc findSyncTargets*(handle: ptr AlpmHandle, dbs: seq[ptr AlpmDatabase],
         return @[]
     else:
       if allowGroups and target.reference.constraint.isNone:
-        let groupRepo = lc[d | (d <- dbs, g <- d.groups,
-          $g.name == target.reference.name), ptr AlpmDatabase].optFirst
+        let groupRepo = optFirst:
+          collect(newSeq):
+            for d in dbs:
+              for g in d.groups:
+                if $g.name == target.reference.name:
+                  d
         if groupRepo.isSome:
           return @[($groupRepo.unsafeGet.name, none(SyncFoundPackageInfo))]
 
@@ -233,25 +237,50 @@ proc queryUnrequired*(handle: ptr AlpmHandle, withOptional: bool, withoutOptiona
       installed.add(pkg.toPackageReference)
       if pkg.reason == AlpmReason.explicit:
         explicit &= $pkg.name
-      dependsTable.add($pkg.name,
-        depends.map(x => (x, false)) + optional.map(x => (x, true)))
+      dependsTable[$pkg.name]=
+        depends.map(x => (x, false)) + optional.map(x => (x, true))
       if provides.len > 0:
-        alternatives.add($pkg.name, provides)
+        alternatives[$pkg.name]= provides
 
     (installed, explicit.toHashSet + assumeExplicit, dependsTable, alternatives)
 
-  let providedBy = lc[(y, x.key) | (x <- alternatives.namedPairs, y <- x.value),
-    tuple[reference: PackageReference, name: string]]
+  let providedBy = collect(newSeq):
+    for x in alternatives.namedPairs:
+      for y in x.value:
+        (reference:y,name:x.key)
 
   proc findRequired(withOptional: bool, results: HashSet[string],
     check: HashSet[string]): HashSet[string] =
     let full = results + check
 
-    let direct = lc[x.reference | (y <- dependsTable.namedPairs, y.key in check,
-      x <- y.value, withOptional or not x.optional), PackageReference]
-
-    let indirect = lc[x.name | (y <- direct, x <- providedBy,
-      y.isProvidedBy(x.reference, true)), string].toHashSet
+    when NimVersion >= "1.3.5":
+      let direct = collect(newSeq):
+        for y in dependsTable.namedPairs:
+          if y.key in check:
+            for x in y.value:
+              if withOptional or not x.optional:
+                x.reference
+      let indirect = collect(initHashSet):
+        for y in direct:
+          for x in providedBy:
+            if y.isProvidedBy(x.reference, true):
+              {x.name}
+    else:
+      let direct = block:
+        var tmp = newSeq[PackageReference]()
+        for y in dependsTable.namedPairs:
+          if y.key in check:
+            for x in y.value:
+              if withOptional or not x.optional:
+                tmp.add(x.reference)
+        tmp
+      let indirect = block:
+        var tmp = initHashSet[string]()
+        for y in direct:
+          for x in providedBy:
+            if y.isProvidedBy(x.reference, true):
+              tmp.incl(x.name)
+        tmp
 
     let checkNext = (direct.map(p => p.name).toHashSet + indirect) - full
     if checkNext.len > 0: findRequired(withOptional, full, checkNext) else: full
@@ -484,7 +513,7 @@ proc cloneBareRepo(config: Config, bareKind: BareKind, bareName: string,
 
   if forkWait(() => (block:
     if not dropPrivileges or dropPrivileges():
-      if existsDir(repoPath):
+      if dirExists(repoPath):
         let branch = branchOption.get("master")
         execResult(gitCmd, "-C", repoPath, "fetch", "-q", "--no-tags",
           "origin", branch & ":" & branch)
@@ -622,13 +651,21 @@ proc obtainBuildPkgInfosInternal(config: Config, bases: seq[LookupBaseGroup],
           (list[tuple[pkgInfos: seq[PackageInfo], path: Option[string]]](), 0))
 
         let pkgInfosWithPaths = pkgInfosWithPathsReversed.reversed
-        let pkgInfos = lc[x | (y <- pkgInfosWithPaths, x <- y.pkgInfos), PackageInfo]
-        let paths = lc[x | (y <- pkgInfosWithPaths, x <- y.path), string]
+        let pkgInfos = collect(newSeq):
+          for y in pkgInfosWithPaths:
+            for x in y.pkgInfos:
+              x
+        let paths = collect(newSeq):
+          for y in pkgInfosWithPaths:
+            for x in y.path:
+              x
 
         let pkgInfosTable = pkgInfos.map(i => (i.rpc.name, i)).toTable
-
-        let foundPkgInfos = lc[x | (y <- pacmanTargetNames,
-          x <- pkgInfosTable.opt(y)), PackageInfo]
+        
+        let foundPkgInfos = collect(newSeq):
+          for y in pacmanTargetNames:
+            for x in pkgInfosTable.opt(y):
+              x
         let errorMessages = pacmanTargetNames
           .filter(n => not pkgInfosTable.hasKey(n))
           .map(n => tr"$#: failed to get package info" % [n])
@@ -665,7 +702,7 @@ proc cloneAurRepo*(config: Config, base: string, gitUrl: string,
 
   if message.isSome:
     (1, message)
-  elif repoPath.existsDir():
+  elif repoPath.dirExists():
     (0, none(string))
   else:
     let fullName = bareFullName(BareKind.pkg, base)
@@ -674,7 +711,7 @@ proc cloneAurRepo*(config: Config, base: string, gitUrl: string,
 
     let cloneBareCode = forkWait(() => (block:
       if not dropPrivileges or dropPrivileges():
-        if existsDir(bareRepoPath):
+        if dirExists(bareRepoPath):
           execResult(gitCmd, "-C", bareRepoPath, "fetch", "-q", "--no-tags",
             "origin", "master:master")
         else:
@@ -738,7 +775,10 @@ proc cloneAurReposWithPackageInfos*(config: Config, rpcInfos: seq[RpcPackageInfo
 
   let (fullPkgInfos, paths, errors) = cloneNext(0, nil, nil, nil)
   let pkgInfosTable = fullPkgInfos.map(i => (i.rpc.name, i)).toTable
-  let resultPkgInfos = lc[x | (y <- rpcInfos, x <- pkgInfosTable.opt(y.name)), PackageInfo]
+  let resultPkgInfos = collect(newSeq):
+    for y in rpcInfos:
+      for x in pkgInfosTable.opt(y.name):
+        x
 
   let names = rpcInfos.map(i => i.name).toHashSet
   let additionalPkgInfos = fullPkgInfos.filter(i => not (i.rpc.name in names))

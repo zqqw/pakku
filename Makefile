@@ -55,7 +55,6 @@ NIM_OPTIMIZE = size
 NIM_CACHE_DIR = nimcache
 
 NIM_OPTIONS = \
-	--useVersion:'1.0' \
 	--putenv:'PROG_VERSION'="${RVERSION}" \
 	--putenv:'PROG_COPYRIGHT'="${COPYRIGHT}" \
 	--putenv:'PROG_PKGLIBDIR'="${PKGLIBDIR}" \

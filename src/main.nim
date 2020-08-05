@@ -1,6 +1,6 @@
 import
   options, os, posix, re, sequtils, strutils, sugar,
-  args, config, format, pacman, utils, "listcomp"
+  args, config, format, pacman, utils
 
 import
   "feature/localquery",
@@ -11,9 +11,11 @@ import
   "feature/syncsource"
 
 proc execSudo*(args: seq[Argument]): int =
-  execResult(sudoPrefix & getAppFilename() &
-    lc[x | (y <- args, x <- y.collectArg), string])
-
+  execResult(sudoPrefix & getAppFilename() & (block:collect(newSeq):
+    for y in args:
+      for x in y.collectArg:
+        x
+    ))
 proc passValidation(args: seq[Argument], config: Config,
   nonRootArgs: openArray[OptionPair], rootArgs: openArray[OptionPair],
   opts: varargs[seq[CommandOption]]): int =

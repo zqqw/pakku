@@ -81,9 +81,9 @@ proc readConfigFile*(configFile: string):
                 table[currentCategory] = category
             elif currentCategory.len > 0:
               if line.match(re"(\w+)\ *=\ *(.*)", matches):
-                category[].add(matches[0], matches[1])
+                category[matches[0]]= matches[1]
               else:
-                category[].add(line, "")
+                category[line]=""
 
         false
       except EOFError:

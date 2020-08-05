@@ -2,7 +2,7 @@ import
   options, posix, sequtils, strutils, sugar, tables,
   "../args", "../aur", "../common", "../config", "../format", "../package",
     "../pacman", "../utils",
-  "../wrapper/alpm", "../listcomp"
+  "../wrapper/alpm"
 
 const
   pacmanInfoStrings = [
@@ -131,7 +131,8 @@ proc handleSyncInfo*(args: seq[Argument], config: Config): int =
       let padding = pacmanInfoStrings.map(s => s.trp).computeMaxLength
       let pkgInfosTable = pkgInfos.map(i => (i.rpc.toPackageReference, i)).toTable
 
-      let codes = code & lc[handleTarget(config, padding, finalArgs, x,
-        x.rpcInfo.map(i => pkgInfosTable.opt(i.toPackageReference)).flatten) |
-        (x <- fullTargets), int]
+      let codes = code & (block:collect(newSeq):
+        for x in fullTargets:
+          handleTarget(config, padding, finalArgs, x, x.rpcInfo.map(i => pkgInfosTable.opt(i.toPackageReference)).flatten)
+        )
       codes.filter(c => c != 0).optFirst.get(0)
