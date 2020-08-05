@@ -110,13 +110,10 @@ proc printPackageInfo*(minPadding: int, color: bool, lines: varargs[PackageLineF
     if values.len == 0:
       @[]
     elif forceBreak:
-      when NimVersion > "1.2":
-        collect(newSeq):
-          for y in values.map(s => strutils.strip(s).splitLines(lineSize)):
-            for x in y:
-              x
-      else:
-        lc[x | (y <- values.map(s => strutils.strip(s).splitLines(lineSize)), x <- y), string]
+      collect(newSeq):
+        for y in values.map(s => strutils.strip(s).splitLines(lineSize)):
+          for x in y:
+            x
     else:
       values.map(v => strutils.strip(v)).foldl(a & "  " & b).splitLines(lineSize)
 

@@ -11,16 +11,11 @@ import
   "feature/syncsource"
 
 proc execSudo*(args: seq[Argument]): int =
-  when NimVersion >= "1.2":
-    execResult(sudoPrefix & getAppFilename() & (block:collect(newSeq):
-      for y in args:
-        for x in y.collectArg:
-          x
-      ))
-  else:
-    execResult(sudoPrefix & getAppFilename() &
-      lc[x | (y <- args, x <- y.collectArg), string])
-
+  execResult(sudoPrefix & getAppFilename() & (block:collect(newSeq):
+    for y in args:
+      for x in y.collectArg:
+        x
+    ))
 proc passValidation(args: seq[Argument], config: Config,
   nonRootArgs: openArray[OptionPair], rootArgs: openArray[OptionPair],
   opts: varargs[seq[CommandOption]]): int =

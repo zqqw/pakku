@@ -91,18 +91,14 @@ const
 
 static:
   # test only single match available
-  when NimVersion >= "1.2":
-    let osSet = collect(initHashSet):
-      for r in packageRepos:
-        for x in r.os:
-          {x}
-    let repoSet = collect(initHashSet):
-      for r in packageRepos:
-        for x in r.repo:
-          {x}
-  else:
-    let osSet = lc[x | (r <- packageRepos, x <- r.os), string].toHashSet
-    let repoSet = lc[x | (r <- packageRepos, x <- r.repo), string].toHashSet
+  let osSet = collect(initHashSet):
+    for r in packageRepos:
+      for x in r.os:
+        {x}
+  let repoSet = collect(initHashSet):
+    for r in packageRepos:
+      for x in r.repo:
+        {x}
   for os in osSet:
     for repo in repoSet:
       let osValue = os
@@ -112,20 +108,14 @@ static:
           "only single matching repo available: " & os & ":" & repo)
 
   # test unique url <> bareName links
-  when NimVersion >= "1.2":
-    let bareNameToUrl = collect(initTable):
-      for r in packageRepos:
-        for x in r.git.bareName:
-          {x:r.git.url}
-    let urlToBareName = collect(initTable):
-      for r in packageRepos:
-        for x in r.git.bareName:
-          {r.git.url:x}
-  else:
-    let bareNameToUrl = lc[(x, r.git.url) |
-      (r <- packageRepos, x <- r.git.bareName), (string, string)].toTable
-    let urlToBareName = lc[(r.git.url, x) |
-      (r <- packageRepos, x <- r.git.bareName), (string, string)].toTable
+  let bareNameToUrl = collect(initTable):
+    for r in packageRepos:
+      for x in r.git.bareName:
+        {x:r.git.url}
+  let urlToBareName = collect(initTable):
+    for r in packageRepos:
+      for x in r.git.bareName:
+        {r.git.url:x}
 
   template testBareNamesAndUrls(m1: untyped, m2: untyped) =
     for x1, x2 in m1:
@@ -282,13 +272,10 @@ proc parseSrcInfoName(repo: string, name: string, baseIndex: int, baseCount: int
   rpcInfos: seq[RpcPackageInfo], baseSeq: ref seq[SrcInfoPair], nameSeq: ref seq[SrcInfoPair],
   arch: string, gitUrl: string, gitSubdir: Option[string]): Option[PackageInfo] =
   proc collectFromPairs(pairs: seq[SrcInfoPair], keyName: string): seq[string] =
-    when NimVersion >= "1.2":
-      collect(newSeq):
-        for x in pairs:
-          if x.key == keyName:
-            x.value
-    else:
-      lc[x.value | (x <- pairs, x.key == keyName), string]
+    collect(newSeq):
+      for x in pairs:
+        if x.key == keyName:
+          x.value
   #changed the name as shadows collect macro from sugar
   proc collectName(baseOnly: bool, keyName: string): seq[string] =
     let res = if baseOnly: @[] else: collectFromPairs(nameSeq[], keyName)
@@ -306,27 +293,20 @@ proc parseSrcInfoName(repo: string, name: string, baseIndex: int, baseCount: int
     filterWith: seq[PackageReference]): seq[PackageReference] =
     references.filter(r => filterWith.filter(w => r.isProvidedBy(w, true)).len == 0)
   
-  when NimVersion >= "1.2":
-    let base = optLast:
-      collect(newSeq):
-        for x in baseSeq[]:
-          if x.key == "pkgbase":
-            x.value
-  else:
-    let base = lc[x.value | (x <- baseSeq[], x.key == "pkgbase"), string].optLast
+  let base = optLast:
+    collect(newSeq):
+      for x in baseSeq[]:
+        if x.key == "pkgbase":
+          x.value
 
   let version = collectName(true, "pkgver").optLast
   let release = collectName(true, "pkgrel").optLast
   let epoch = collectName(true, "epoch").optLast
-  when NimVersion >= "1.2":
-    let versionFull = (block:collect(newSeq):
-      for v in version:
-        for r in release:
-          (v & "-" & r)
-      ).optLast.map(v => epoch.map(e => e & ":" & v).get(v))
-  else:
-    let versionFull = lc[(v & "-" & r) | (v <- version, r <- release), string].optLast
-      .map(v => epoch.map(e => e & ":" & v).get(v))
+  let versionFull = (block:collect(newSeq):
+    for v in version:
+      for r in release:
+        (v & "-" & r)
+    ).optLast.map(v => epoch.map(e => e & ":" & v).get(v))
 
   let description = collectName(false, "pkgdesc").optLast
   let archs = collectName(false, "arch").filter(a => a != "any")
@@ -348,24 +328,16 @@ proc parseSrcInfoName(repo: string, name: string, baseIndex: int, baseCount: int
 
   let info = rpcInfos.filter(i => i.name == name).optLast
 
-  when NimVersion >= "1.2":
-    optLast:
-      collect(newSeq):
-        for b in base:
-          for v in versionFull:
-            ((repo, b, name, v, description, info.map(i => i.maintainer).flatten,
-            info.map(i => i.firstSubmitted).flatten, info.map(i => i.lastModified).flatten,
-            info.map(i => i.outOfDate).flatten, info.map(i => i.votes).get(0),
-            info.map(i => i.popularity).get(0), gitUrl, gitSubdir), baseIndex,  baseCount,
-            archs, url, licenses, groups, pgpKeys, depends, makeDepends, checkDepends,
-            optional, provides, conflicts, replaces)
-  else:
-    lc[((repo, b, name, v, description, info.map(i => i.maintainer).flatten,
-    info.map(i => i.firstSubmitted).flatten, info.map(i => i.lastModified).flatten,
-    info.map(i => i.outOfDate).flatten, info.map(i => i.votes).get(0),
-    info.map(i => i.popularity).get(0), gitUrl, gitSubdir), baseIndex,  baseCount,
-    archs, url, licenses, groups, pgpKeys, depends, makeDepends, checkDepends,
-    optional, provides, conflicts, replaces) | (b <- base, v <- versionFull), PackageInfo].optLast
+  optLast:
+    collect(newSeq):
+      for b in base:
+        for v in versionFull:
+          ((repo, b, name, v, description, info.map(i => i.maintainer).flatten,
+          info.map(i => i.firstSubmitted).flatten, info.map(i => i.lastModified).flatten,
+          info.map(i => i.outOfDate).flatten, info.map(i => i.votes).get(0),
+          info.map(i => i.popularity).get(0), gitUrl, gitSubdir), baseIndex,  baseCount,
+          archs, url, licenses, groups, pgpKeys, depends, makeDepends, checkDepends,
+          optional, provides, conflicts, replaces)
 
 proc parseSrcInfo*(repo: string, srcInfo: string, arch: string, gitUrl: string,
   gitSubdir: Option[string], rpcInfos: seq[RpcPackageInfo] = @[]): seq[PackageInfo] =

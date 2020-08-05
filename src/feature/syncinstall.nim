@@ -66,14 +66,11 @@ proc isVcs(name: string): bool =
 
 proc orderInstallation(ordered: seq[seq[seq[PackageInfo]]], grouped: seq[seq[PackageInfo]],
   satisfied: Table[PackageReference, SatisfyResult]): seq[seq[seq[PackageInfo]]] =
-  when NimVersion >= "1.2":
-    let orderedNamesSet = collect(initHashSet):
-      for a in ordered:
-        for b in a:
-          for c in b:
-            {c.rpc.name}
-  else:
-    let orderedNamesSet = lc[c.rpc.name | (a <- ordered, b <- a, c <- b), string].toHashSet
+  let orderedNamesSet = collect(initHashSet):
+    for a in ordered:
+      for b in a:
+        for c in b:
+          {c.rpc.name}
 
   proc hasBuildDependency(pkgInfos: seq[PackageInfo]): bool =
     for pkgInfo in pkgInfos:
@@ -248,17 +245,13 @@ proc findDependencies(config: Config, handle: ptr AlpmHandle, dbs: seq[ptr AlpmD
     success.map(r => (r.reference, r.result.unsafeGet)) &
     aurSuccess.map(r => (r.reference, r.result.unsafeGet))).toTable
 
-  when NimVersion >= "1.2":
-    let newUnsatisfied = deduplicate:
-      collect(newSeq):
-        for y in aurSuccess:
-          for r in y.result:
-            for i in r.buildPkgInfo:
-              for x in i.allDepends:
-                x
-  else:
-    let newUnsatisfied = lc[x | (y <- aurSuccess, r <- y.result, i <- r.buildPkgInfo,
-      x <- i.allDepends), PackageReference].deduplicate
+  let newUnsatisfied = deduplicate:
+    collect(newSeq):
+      for y in aurSuccess:
+        for r in y.result:
+          for i in r.buildPkgInfo:
+            for x in i.allDepends:
+              x
 
   let newTotalAurFail = (totalAurFail & aurFail).deduplicate
   let newTotalUnsatisfied = (newUnsatisfied & newTotalAurFail).deduplicate
@@ -277,14 +270,11 @@ proc findDependencies(config: Config, handle: ptr AlpmHandle,
   (Table[PackageReference, SatisfyResult], seq[PackageReference], seq[string]) =
   let satisfied = pkgInfos.map(p => ((p.rpc.name, none(string), none(VersionConstraint)),
     (false, p.rpc.name, some(p)))).toTable
-  when NimVersion >= "1.2":
-    let unsatisfied = deduplicate:
-      collect(newSeq):
-        for i in pkgInfos:
-          for x in i.allDepends:
-            x
-  else:
-    let unsatisfied = lc[x | (i <- pkgInfos, x <- i.allDepends), PackageReference].deduplicate
+  let unsatisfied = deduplicate:
+    collect(newSeq):
+      for i in pkgInfos:
+        for x in i.allDepends:
+          x
   findDependencies(config, handle, dbs, satisfied, unsatisfied, @[],
     additionalPkgInfos, @[], nodepsCount, assumeInstalled, printMode, noaur)
 
@@ -496,13 +486,10 @@ proc buildLoop(config: Config, pkgInfos: seq[PackageInfo], skipDeps: bool,
         else:
           resultByNames
 
-      when NimVersion >= "1.2":
-        let failedNames = collect(newSeq):
-          for x in resultByIndices:
-            if x.pkgInfo.isNone:
-              x.name
-      else:
-        let failedNames = lc[x.name | (x <- resultByIndices, x.pkgInfo.isNone), string]
+      let failedNames = collect(newSeq):
+        for x in resultByIndices:
+          if x.pkgInfo.isNone:
+            x.name
 
       if failedNames.len > 0:
         for name in failedNames:
@@ -592,24 +579,16 @@ proc installGroupFromSources(config: Config, commonArgs: seq[Argument],
     let arch = if pkgInfo.archs.len > 0: config.common.arch else: "any"
     config.tmpRootInitial & "/" & pkgInfo.rpc.name & "-" & pkgInfo.rpc.version & "-" & arch & ext
 
-  when NimVersion >= "1.2":
-    let allFiles = collect(newSeq):
-      for br in buildResults:
-        for r in br.replacePkgInfos:
-          (name:r.name, file:formatArchiveFile(r.pkgInfo, br.ext))
-  else:
-    let allFiles = lc[(r.name, formatArchiveFile(r.pkgInfo, br.ext)) |
-      (br <- buildResults, r <- br.replacePkgInfos), tuple[name: Option[string], file: string]]
+  let allFiles = collect(newSeq):
+    for br in buildResults:
+      for r in br.replacePkgInfos:
+        (name:r.name, file:formatArchiveFile(r.pkgInfo, br.ext))
   let filesTable = allFiles.filter(f => f.name.isSome).map(f => (f.name.unsafeGet, f.file)).toTable
-  when NimVersion >= "1.2":
-    let install = collect(newSeq):
-      for g in basePackages:
-        for i in g:
-          for x in filesTable.opt(i.rpc.name):
-            (name:i.rpc.name,file:x)
-  else:
-    let install = lc[(i.rpc.name, x) | (g <- basePackages, i <- g, x <- filesTable.opt(i.rpc.name)),
-      tuple[name: string, file: string]]
+  let install = collect(newSeq):
+    for g in basePackages:
+      for i in g:
+        for x in filesTable.opt(i.rpc.name):
+          (name:i.rpc.name,file:x)
 
   proc handleTmpRoot(clear: bool) =
     let installFiles = install.map(p => p.file)
@@ -670,22 +649,15 @@ proc installGroupFromSources(config: Config, commonArgs: seq[Argument],
       let pacmanDatabaseParams = pacmanCmd & pacmanParams(config.color,
         commonArgs.keepOnlyOptions(commonOptions) & ("D", none(string), ArgumentType.short))
 
-      when NimVersion >= "1.2":
-        let installParams = sudoPrefix & (pkgLibDir & "/install") &
-          cacheDir & $cacheUser & $cacheGroup &
-          $pacmanUpgradeParams.len & pacmanUpgradeParams &
-          $pacmanDatabaseParams.len & pacmanDatabaseParams &
-          (block:collect(newSeq):
-            for i in installWithReason:
-              for x in [i.name,i.file,i.mode]:
-                x
-          )
-      else:
-        let installParams = sudoPrefix & (pkgLibDir & "/install") &
-          cacheDir & $cacheUser & $cacheGroup &
-          $pacmanUpgradeParams.len & pacmanUpgradeParams &
-          $pacmanDatabaseParams.len & pacmanDatabaseParams &
-          lc[x | (i <- installWithReason, x <- [i.name, i.file, i.mode]), string]
+      let installParams = sudoPrefix & (pkgLibDir & "/install") &
+        cacheDir & $cacheUser & $cacheGroup &
+        $pacmanUpgradeParams.len & pacmanUpgradeParams &
+        $pacmanDatabaseParams.len & pacmanDatabaseParams &
+        (block:collect(newSeq):
+          for i in installWithReason:
+            for x in [i.name,i.file,i.mode]:
+              x
+        )
 
       let code = forkWait(() => execResult(installParams))
       if code != 0:
@@ -715,15 +687,11 @@ proc installGroupFromSources(config: Config, commonArgs: seq[Argument],
             run(gitCmd, "-C", bareRepoPath, "tag", tag)
 
         handleTmpRoot(true)
-        when NimVersion >= "1.2":
-          let installedAs = collect(newSeq):
-            for br in buildResults:
-              for r in br.replacePkgInfos:
-                if r.name.isSome:
-                  (r.name.unsafeGet, r.pkgInfo.rpc.name)
-        else:
-          let installedAs = lc[(r.name.unsafeGet, r.pkgInfo.rpc.name) | (br <- buildResults,
-            r <- br.replacePkgInfos, r.name.isSome), (string, string)]
+        let installedAs = collect(newSeq):
+          for br in buildResults:
+            for r in br.replacePkgInfos:
+              if r.name.isSome:
+                (r.name.unsafeGet, r.pkgInfo.rpc.name)
         (installedAs, 0)
 
 proc deduplicatePkgInfos(pkgInfos: seq[PackageInfo],
@@ -755,24 +723,16 @@ proc resolveDependencies(config: Config, pkgInfos: seq[PackageInfo],
       newSeq[seq[seq[PackageInfo]]](), newSeq[string]())
   else:
     let buildAndAurNamesSet = pkgInfos.map(i => i.rpc.name).toHashSet
-    when NimVersion >= "1.2":
-      let fullPkgInfos = (pkgInfos & (block:collect(newSeq):
-        for s in satisfied.values:
-          for i in s.buildPkgInfo:
-            if not (i.rpc.name in buildAndAurNamesSet):
-              i
-        )).deduplicatePkgInfos(config,false)
-      let additionalPacmanTargets = collect(newSeq):
-        for x in satisfied.values:
-          if not x.installed and x.buildPkgInfo.isNone:
-            x.name
-    else:
-      let fullPkgInfos = (pkgInfos & lc[i | (s <- satisfied.values,
-        i <- s.buildPkgInfo, not (i.rpc.name in buildAndAurNamesSet)), PackageInfo])
-        .deduplicatePkgInfos(config, false)
-
-      let additionalPacmanTargets = lc[x.name | (x <- satisfied.values,
-        not x.installed and x.buildPkgInfo.isNone), string]
+    let fullPkgInfos = (pkgInfos & (block:collect(newSeq):
+      for s in satisfied.values:
+        for i in s.buildPkgInfo:
+          if not (i.rpc.name in buildAndAurNamesSet):
+            i
+      )).deduplicatePkgInfos(config,false)
+    let additionalPacmanTargets = collect(newSeq):
+      for x in satisfied.values:
+        if not x.installed and x.buildPkgInfo.isNone:
+          x.name
     let orderedPkgInfos = orderInstallation(fullPkgInfos, satisfied)
 
     (true, satisfied, additionalPacmanTargets, orderedPkgInfos, paths)
@@ -781,29 +741,20 @@ proc confirmViewAndImportKeys(config: Config, basePackages: seq[seq[seq[PackageI
   installed: seq[Installed], noconfirm: bool): int =
   if basePackages.len > 0: (block:
     let installedVersions = installed.map(i => (i.name, i.version)).toTable
-    when NimVersion >= "1.2":
-      printPackages(config.color, config.common.verbosePkgLists,(block:collect(newSeq):
-        for g in basePackages:
-          for b in g:
-            for i in b:
-              (i.rpc.name,i.rpc.repo,installedVersions.opt(i.rpc.name),i.rpc.version).PackageInstallFormat
-        ).sorted((a,b) => cmp(a.name, b.name)))
-    else:
-      printPackages(config.color, config.common.verbosePkgLists,
-        lc[(i.rpc.name, i.rpc.repo, installedVersions.opt(i.rpc.name), i.rpc.version) |
-          (g <- basePackages, b <- g, i <- b), PackageInstallFormat]
-          .sorted((a, b) => cmp(a.name, b.name)))
+    printPackages(config.color, config.common.verbosePkgLists,(block:collect(newSeq):
+      for g in basePackages:
+        for b in g:
+          for i in b:
+            (i.rpc.name,i.rpc.repo,installedVersions.opt(i.rpc.name),i.rpc.version).PackageInstallFormat
+      ).sorted((a,b) => cmp(a.name, b.name)))
     let input = printColonUserChoice(config.color,
       tr"Proceed with building?", ['y', 'n'], 'y', 'n', noconfirm, 'y')
 
     if input == 'y':
-      when NimVersion >= "1.2":
-        let flatBasePackages = collect(newSeq):
-          for a in basePackages:
-            for x in a:
-              x
-      else:
-        let flatBasePackages = lc[x | (a <- basePackages, x <- a), seq[PackageInfo]]
+      let flatBasePackages = collect(newSeq):
+        for a in basePackages:
+          for x in a:
+            x
 
       proc checkNext(index: int, skipEdit: bool, skipKeys: bool): int =
         if index < flatBasePackages.len:
@@ -834,14 +785,11 @@ proc confirmViewAndImportKeys(config: Config, basePackages: seq[seq[seq[PackageI
           else:
             let resultPkgInfos = reloadPkgInfos(config,
               repoPath & "/" & pkgInfos[0].rpc.gitSubdir.get("."), pkgInfos)
-            when NimVersion >= "1.2":
-              let pgpKeys = deduplicate:
-                collect(newSeq):
-                  for p in resultPkgInfos:
-                    for x in p.pgpKeys:
-                      x
-            else:
-              let pgpKeys = lc[x | (p <- resultPkgInfos, x <- p.pgpKeys), string].deduplicate
+            let pgpKeys = deduplicate:
+              collect(newSeq):
+                for p in resultPkgInfos:
+                  for x in p.pgpKeys:
+                    x
 
             proc keysLoop(index: int, skipKeys: bool): char =
               if index >= pgpKeys.len:
@@ -982,14 +930,10 @@ proc filterIgnoresAndConflicts(config: Config, pkgInfos: seq[PackageInfo],
   targetNamesSet: HashSet[string], installed: Table[string, Installed],
   printMode: bool, noconfirm: bool): (seq[PackageInfo], seq[PackageInfo]) =
   let acceptedPkgInfos = pkgInfos.filter(pkgInfo => (block:
-    when NimVersion >= "1.2":
-      let instGroups = collect(newSeq):
-        for i in installed.opt(pkgInfo.rpc.name):
-          for x in i.groups:
-            x
-    else:
-      let instGroups = lc[x | (i <- installed.opt(pkgInfo.rpc.name),
-        x <- i.groups), string]
+    let instGroups = collect(newSeq):
+      for i in installed.opt(pkgInfo.rpc.name):
+        for x in i.groups:
+          x
 
     if config.ignored(pkgInfo.rpc.name, (instGroups & pkgInfo.groups).deduplicate):
       if pkgInfo.rpc.name in targetNamesSet:
@@ -1006,26 +950,20 @@ proc filterIgnoresAndConflicts(config: Config, pkgInfos: seq[PackageInfo],
       true))
 
   let nonConflicingPkgInfos = acceptedPkgInfos.foldl(block:
-    when NimVersion >= "1.2":
-      let conflictsWith = collect(newSeq):
-        for p in a:
-          if p.rpc.name != b.rpc.name and 
-              (block:collect(newSeq):
-                for c in b.conflicts:
-                  if c.isProvidedBy(p.rpc.toPackageReference, true):
-                    0
-              ).len>0 or 
-              (block:collect(newSeq):
-                for c in p.conflicts:
-                  if c.isProvidedBy(p.rpc.toPackageReference, true):
-                    0
-              ).len>0:
-            p
-    else:
-      let conflictsWith = lc[p | (p <- a, p.rpc.name != b.rpc.name and
-        (lc[0 | (c <- b.conflicts, c.isProvidedBy(p.rpc.toPackageReference, true)), int].len > 0 or
-          lc[0 | (c <- p.conflicts, c.isProvidedBy(b.rpc.toPackageReference, true)), int].len > 0)),
-        PackageInfo]
+    let conflictsWith = collect(newSeq):
+      for p in a:
+        if p.rpc.name != b.rpc.name and 
+            (block:collect(newSeq):
+              for c in b.conflicts:
+                if c.isProvidedBy(p.rpc.toPackageReference, true):
+                  0
+            ).len>0 or 
+            (block:collect(newSeq):
+              for c in p.conflicts:
+                if c.isProvidedBy(p.rpc.toPackageReference, true):
+                  0
+            ).len>0:
+          p
     if not printMode and conflictsWith.len > 0:
       for conflict in conflictsWith:
         printWarning(config.color,
@@ -1157,12 +1095,9 @@ proc obtainInstalledWithAur(config: Config): (seq[Installed], seq[string]) =
       ($package.name, $package.version, package.groupsSeq,
         package.reason == AlpmReason.explicit, foreign)
 
-    when NimVersion >= "1.2":
-      let installed = collect(newSeq):
-        for p in handle.local.packages:
-          createInstalled(p)
-    else:
-      let installed = lc[createInstalled(p) | (p <- handle.local.packages), Installed]
+    let installed = collect(newSeq):
+      for p in handle.local.packages:
+        createInstalled(p)
     let checkAurUpgradeNames = installed
       .filter(i => i.foreign and (config.checkIgnored or not config.ignored(i.name, i.groups)))
       .map(i => i.name)
@@ -1195,13 +1130,10 @@ proc resolveBuildTargets(config: Config, syncTargets: seq[SyncPackageTarget],
   let installedTable = installed.map(i => (i.name, i)).toTable
   let rpcAurTargets = fullTargets.filter(f => f.isAurTargetFull(config.aurRepo))
 
-  when NimVersion >= "1.2":
-    let targetRpcInfos = collect(newSeq):
-      for t in rpcAurTargets:
-        for x in t.rpcInfo:
-          x
-  else:
-    let targetRpcInfos = lc[x | (t <- rpcAurTargets, x <- t.rpcInfo), RpcPackageInfo]
+  let targetRpcInfos = collect(newSeq):
+    for t in rpcAurTargets:
+      for x in t.rpcInfo:
+        x
   let targetRpcInfoNames = targetRpcInfos.map(i => i.name).toHashSet
   let rpcInfos = targetRpcInfos & upgradeRpcInfos.filter(i => not (i.name in targetRpcInfoNames))
 
@@ -1349,15 +1281,11 @@ proc handleInstall(args: seq[Argument], config: Config, syncTargets: seq[SyncPac
                           return true
                     return false
 
-                  when NimVersion >= "1.2":
-                    collect(newSeq):
-                      for x in satisfied.namedPairs:
-                        if not x.value.installed and x.value.buildPkgInfo.isNone and
-                            not x.key.checkSatisfied:
-                          x.key
-                  else:
-                    lc[x.key | (x <- satisfied.namedPairs, not x.value.installed and
-                      x.value.buildPkgInfo.isNone and not x.key.checkSatisfied), PackageReference]
+                  collect(newSeq):
+                    for x in satisfied.namedPairs:
+                      if not x.value.installed and x.value.buildPkgInfo.isNone and
+                          not x.key.checkSatisfied:
+                        x.key
               else:
                 @[]
 
