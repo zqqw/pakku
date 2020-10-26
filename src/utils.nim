@@ -1,5 +1,5 @@
 import
-  hashes, options, os, posix, sequtils, strutils, sugar, tables
+  hashes, options, os, posix, sequtils, strutils, sugar, tables, osproc, streams, strtabs
 
 type
   HaltError* = object of CatchableError
@@ -170,22 +170,18 @@ proc forkWaitInternal(call: () -> int, beforeWait: () -> void): int =
 proc forkWait*(call: () -> int): int =
   forkWaitInternal(call, proc = discard)
 
+var dPriv: bool = false
+var writeFlag: bool = false
+var fd: array[2, cint]
+
 proc forkWaitRedirect*(call: () -> int): tuple[output: seq[string], code: int] =
-  var fd: array[2, cint]
-  discard pipe(fd)
-
+  if pipe(fd) == -1:
+    raiseOSError(osLastError())
   var data = newSeq[char]()
-
-  let code = forkWaitInternal(() => (block:
+  writeFlag = true
+  let code = forkWaitInternal(() => (block: # "call" child process
     discard close(fd[0])
-    discard close(1)
-    discard dup(fd[1])
-    discard close(fd[1])
-    discard close(0)
-    discard open("/dev/null")
-    discard close(2)
-    discard open("/dev/null")
-    call()), () => (block:
+    call()), () => (block: # "beforewait" parent process
     discard close(fd[1])
     var buffer: array[80, char]
     while true:
@@ -194,23 +190,20 @@ proc forkWaitRedirect*(call: () -> int): tuple[output: seq[string], code: int] =
         break
       data &= buffer[0 .. count - 1]
     discard close(fd[0])))
-
+  writeFlag = false
   var output = newStringOfCap(data.len)
   for c in data:
     output &= c
-
   let lines = if output.len == 0:
       @[]
     elif output.len > 0 and $output[^1] == "\n":
       output[0 .. ^2].split("\n")
     else:
       output.split("\n")
-
   (lines, code)
 
 proc getgrouplist*(user: cstring, group: Gid, groups: ptr cint, ngroups: var cint): cint
   {.importc, header: "<grp.h>".}
-
 
 proc setgroups*(size: csize_t, groups: ptr cint): cint
   {.importc, header: "<grp.h>".}
@@ -249,6 +242,70 @@ except:
 
 proc canDropPrivileges*(): bool =
   initialUser.isSome
+
+proc dropPrivRedirect*(): bool =
+  dPriv = true
+  return true
+
+proc execRedirect*(args: varargs[string]): int =
+  var
+    code: int
+    p: owned(Process)
+    argSeq: seq[string] = @args
+    iUser: User
+    envs: StringTableRef = nil
+
+  if dPriv == true:
+    if initialUser.isSome:
+      iUser = initialUser.unsafeGet
+    envs = newStringTable(modeCaseSensitive)
+    if iUser.name != "":
+      var groups = iUser.groups.map(x => x.cint)
+      if setgroups(cast[csize_t](iUser.groups.len), addr(groups[0])) < 0:
+        envs = nil
+      if setgid((Gid) iUser.gid) != 0:
+        envs = nil
+      if setuid((Uid) iUser.uid) != 0:
+        envs = nil
+      for key, value in envPairs():
+        if key in ["SUDO_COMMAND", "SUDO_USER", "SUDO_UID", "SUDO_GID", "PKEXEC_UID"]:
+          continue
+        if key in ["USER", "USERNAME", "LOGNAME"]:
+          envs[key] = iUser.name
+          continue
+        if key in ["HOME"]:
+          envs[key] = iUser.home
+          continue
+        if key in ["SHELL"]:
+          envs[key] = iUser.shell
+          continue
+        envs[key] = value
+      if envs == nil:
+        echo "Error: failed to drop privileges"
+        return -1
+  discard close(fd[0])
+  argSeq.delete(0)
+  try:
+    p = startProcess(command = args[0], args = argSeq, env = envs, options = {poStdErrToStdOut, poUsePath})
+  except:
+    echo "Error: " & getCurrentExceptionMsg()
+    return -1
+  var outp = outputStream(p)
+  close(inputStream(p))
+  var line = newStringOfCap(120).TaintedString
+  while true:
+    if outp.readLine(line):
+      if writeFlag == false:
+        echo line.string
+      else:
+        discard write(fd[1], line.string.cstring, len(line.string))
+        discard write(fd[1], "\n".cstring, 1)
+    else:
+      code = peekExitCode(p)
+      if code != -1: break
+  close(p)
+  discard close(fd[1])
+  return code
 
 proc dropPrivileges*(): bool =
   if initialUser.isSome:

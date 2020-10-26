@@ -177,7 +177,7 @@ proc handleHelp(operation: OperationType) =
     .map(o => @["-" & o.pair.short.get])
     .optFirst.get(@[]) & @["-h"]
 
-  let (lines, _) = forkWaitRedirect(() => execResult(pacmanCmd & operationArgs))
+  let (lines, _) = forkWaitRedirect(() => execRedirect(pacmanCmd & operationArgs))
 
   for line in lines:
     echo(line.replace(re"\bpacman\b", "pakku"))

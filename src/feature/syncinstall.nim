@@ -305,6 +305,17 @@ template dropPrivilegesAndChdir(path: Option[string], body: untyped): int =
     printError(config.color, tr"failed to drop privileges")
     quit(1)
 
+template dropPrivRedirectAndChdir(path: Option[string], body: untyped): int =
+  if dropPrivRedirect():
+    if path.isNone or chdir(path.unsafeGet) == 0:
+      body
+    else:
+      printError(config.color, tr"chdir failed: $#" % [path.unsafeGet])
+      quit(1)
+  else:
+    printError(config.color, tr"failed to drop privileges")
+    quit(1)
+
 template createViewTag(repo: string, base: string): string =
   "view-" & repo & "/" & base
 
@@ -376,8 +387,8 @@ proc editLoop(config: Config, repo: string, base: string, repoPath: string,
 
   let (hasChanges, noTag) = if repo == config.aurRepo: (block:
       let revisions = forkWaitRedirect(() => (block:
-        dropPrivilegesAndChdir(none(string)):
-          execResult(gitCmd, "-C", repoPath, "rev-list", tag & "..@")))
+        dropPrivRedirectAndChdir(none(string)):
+          execRedirect(gitCmd, "-C", repoPath, "rev-list", tag & "..@")))
 
       if revisions.code != 0:
         (false, true)
@@ -385,8 +396,8 @@ proc editLoop(config: Config, repo: string, base: string, repoPath: string,
         (false, false)
       else: (block:
         let diff = forkWaitRedirect(() => (block:
-          dropPrivilegesAndChdir(none(string)):
-            execResult(gitCmd, "-C", repoPath, "diff", tag & "..@", gitSubdir.get("."))))
+          dropPrivRedirectAndChdir(none(string)):
+            execRedirect(gitCmd, "-C", repoPath, "diff", tag & "..@", gitSubdir.get("."))))
         (diff.output.len > 0, false)))
     else:
       (false, true)
@@ -436,8 +447,8 @@ proc buildLoop(config: Config, pkgInfos: seq[PackageInfo], skipDeps: bool,
     let envExt = getEnv("PKGEXT")
     let confExt = if envExt.len == 0:
         forkWaitRedirect(() => (block:
-          dropPrivilegesAndChdir(none(string)):
-            execResult(bashCmd, "-c",
+          dropPrivRedirectAndChdir(none(string)):
+            execRedirect(bashCmd, "-c",
               "source \"$@\" && echo \"$PKGEXT\"",
               "bash", workConfFile)))
           .output.optFirst.get("")

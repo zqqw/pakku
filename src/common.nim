@@ -346,8 +346,8 @@ proc getGitFiles*(repoPath: string, gitSubdir: Option[string],
   dropPrivileges: bool): seq[string] =
   if gitSubdir.isSome:
     forkWaitRedirect(() => (block:
-      if not dropPrivileges or dropPrivileges():
-        execResult(gitCmd, "-C", repoPath, "ls-tree", "-r", "--name-only", "@",
+      if not dropPrivileges or dropPrivRedirect():
+        execRedirect(gitCmd, "-C", repoPath, "ls-tree", "-r", "--name-only", "@",
           gitSubdir.unsafeGet & "/")
       else:
         quit(1)))
@@ -355,8 +355,8 @@ proc getGitFiles*(repoPath: string, gitSubdir: Option[string],
       .map(s => s[gitSubdir.unsafeGet.len + 1 .. ^1])
   else:
     forkWaitRedirect(() => (block:
-      if not dropPrivileges or dropPrivileges():
-        execResult(gitCmd, "-C", repoPath, "ls-tree", "-r", "--name-only", "@")
+      if not dropPrivileges or dropPrivRedirect():
+        execRedirect(gitCmd, "-C", repoPath, "ls-tree", "-r", "--name-only", "@")
       else:
         quit(1)))
       .output
@@ -380,16 +380,16 @@ proc bisectVersion(repoPath: string, debug: bool, firstCommit: Option[string],
       (firstCommit, false)
     else:
       (forkWaitRedirect(() => (block:
-        if not dropPrivileges or dropPrivileges():
-          execResult(gitCmd, "-C", repoPath,
+        if not dropPrivileges or dropPrivRedirect():
+          execRedirect(gitCmd, "-C", repoPath,
             "rev-list", "--max-parents=0", "@")
         else:
           quit(1)))
         .output.optLast, true)
 
   let (realLastThreeCommits, _) = forkWaitRedirect(() => (block:
-    if not dropPrivileges or dropPrivileges():
-      execResult(gitCmd, "-C", repoPath,
+    if not dropPrivileges or dropPrivRedirect():
+      execRedirect(gitCmd, "-C", repoPath,
         "rev-list", "--max-count=3", "@")
     else:
       quit(1)))
@@ -408,8 +408,8 @@ proc bisectVersion(repoPath: string, debug: bool, firstCommit: Option[string],
       none(string)
     else:
       let foundVersion = forkWaitRedirect(() => (block:
-        if not dropPrivileges or dropPrivileges():
-          execResult(pkgLibDir & "/bisect",
+        if not dropPrivileges or dropPrivRedirect():
+          execRedirect(pkgLibDir & "/bisect",
             compareMethod, repoPath & "/" & gitSubdir, version)
         else:
           quit(1)))
@@ -452,8 +452,8 @@ proc bisectVersion(repoPath: string, debug: bool, firstCommit: Option[string],
         "bisect", "run", pkgLibDir & "/bisect", compareMethod, gitSubdir, version)
 
       let commit = forkWaitRedirect(() => (block:
-        if not dropPrivileges or dropPrivileges():
-          execResult(gitCmd, "-C", repoPath,
+        if not dropPrivileges or dropPrivRedirect():
+          execRedirect(gitCmd, "-C", repoPath,
             "rev-list", "--max-count=1", "refs/bisect/bad")
         else:
           quit(1)))
@@ -477,8 +477,8 @@ proc bisectVersion(repoPath: string, debug: bool, firstCommit: Option[string],
 
 proc obtainSrcInfo*(path: string): string =
   let (output, code) = forkWaitRedirect(() => (block:
-    if dropPrivileges() and chdir(path) == 0:
-      execResult(makePkgCmd, "--printsrcinfo")
+    if dropPrivRedirect() and chdir(path) == 0:
+      execRedirect(makePkgCmd, "--printsrcinfo")
     else:
       quit(1)))
 

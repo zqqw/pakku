@@ -407,8 +407,8 @@ proc obtainPacmanConfig*(args: seq[Argument]): PacmanConfig =
         {x}
 
   let hasKeyserver = forkWaitRedirect(() => (block:
-    if dropPrivileges():
-      execResult(gpgConfCmd, "--list-options", "gpg")
+    if dropPrivRedirect():
+      execRedirect(gpgConfCmd, "--list-options", "gpg")
     else:
       quit(1)))
     .output
