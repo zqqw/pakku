@@ -1,5 +1,5 @@
 import
-  macros, options, posix, sequtils, strutils, sugar, times, unicode,
+  macros, options, posix, sequtils, strutils, sugar, times, unicode, terminal,
   utils
 
 type
@@ -299,7 +299,7 @@ macro choices*(choices: varargs[untyped]): untyped =
       else:
         error("error")
 
-proc printProgressFull*(bar: bool, title: string): ((string, float) -> void, () -> void) =
+proc printProgressFull*(bar: bool, chomp: bool, title: string): ((string, float) -> void, () -> void) =
   let width = getWindowSize().width
 
   if not bar or width <= 0:
@@ -313,16 +313,32 @@ proc printProgressFull*(bar: bool, title: string): ((string, float) -> void, () 
     var lastTime = startTime
     var lastProgress = 0f
     var averageSpeed = -1f
+    var mouth = "c"
 
     proc update(prefix: string, progress: float) {.sideEffect,closure.} =
       let progressTrim = max(min(1, progress + 0.005), 0)
       let progressStr = $(progressTrim * 100).int & "%"
       let paddedProgressStr = ' '.repeat(5 - progressStr.len) & progressStr
 
-      let indicator = if progressLen > 8: (block:
+      let indicator = if progressLen > 8:
           let fullLen = progressLen - 8
           let barLen = (fullLen.float * progressTrim).int
-          " [" & '#'.repeat(barLen) & '-'.repeat(fullLen - barLen) & "]")
+          if chomp: # This disregards the "Color" setting - but, so does pacman
+            var t: string
+            t.add(" [")
+            for i in countdown(fullLen, 1):
+              if i > fullLen - barLen:
+                t.add("-")
+              elif i == fullLen - barLen:
+                t.add(ansiForegroundColorCode(fgYellow) & mouth & ansiForegroundColorCode(fgWhite))
+              elif i mod 3 == 0:
+                t.add("o")
+              else:
+                t.add(" ")
+            t.add(ansiForegroundColorCode(fgDefault) & "]")
+            t
+          else:
+            " [" & '#'.repeat(barLen) & '-'.repeat(fullLen - barLen) & "]"
         else:
           ""
 
@@ -331,6 +347,10 @@ proc printProgressFull*(bar: bool, title: string): ((string, float) -> void, () 
         let speed = (progress - lastProgress) / (time - lastTime).float
         lastTime = time
         lastProgress = progress
+        if mouth == "c":
+          mouth = "C"
+        else:
+          mouth = "c"
         if averageSpeed < 0:
           averageSpeed = speed
         else:
@@ -347,9 +367,9 @@ proc printProgressFull*(bar: bool, title: string): ((string, float) -> void, () 
         else:
           "--:--"
 
-      stdout.write(prefix, title,
+      stdout.styledWrite(prefix, title,
         ' '.repeat(infoLen - prefix.runeLen - title.runeLen - 1 - timeLeft.len),
-        ' ', timeLeft, indicator, paddedProgressStr, "\x1b[0K\r")
+        " ", timeLeft, indicator, paddedProgressStr, "\x1b[0K\r")
       stdout.flushFile()
 
     proc terminate() {.sideEffect,closure.} =
@@ -359,8 +379,8 @@ proc printProgressFull*(bar: bool, title: string): ((string, float) -> void, () 
 
     (update, terminate)
 
-proc printProgressShare*(bar: bool, title: string): ((int, int) -> void, () -> void) =
-  let (updateFull, terminate) = printProgressFull(bar, title)
+proc printProgressShare*(bar: bool, chomp: bool, title: string): ((int, int) -> void, () -> void) =
+  let (updateFull, terminate) = printProgressFull(bar, chomp, title)
 
   proc update(current: int, total: int) {.sideEffect,closure.} =
     let prefix = if total > 0:

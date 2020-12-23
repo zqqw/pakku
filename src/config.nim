@@ -18,6 +18,7 @@ type
     arch: string,
     debug: bool,
     progressBar: bool,
+    chomp: bool,
     verbosePkgLists: bool,
     downloadTimeout: bool,
     pgpKeyserver: Option[string],
@@ -178,8 +179,8 @@ proc obtainConfig*(config: PacmanConfig): Config =
       [aurRepo, tra"wrong or NULL argument passed"], colorNeeded = some(color))
 
   ((config.common.dbs, config.common.arch, config.common.debug, config.common.progressBar,
-    config.common.verbosePkgLists, config.common.downloadTimeout, config.common.pgpKeyserver,
-    config.common.defaultRoot and config.sysrootOption.isNone,
+    config.common.chomp, config.common.verbosePkgLists, config.common.downloadTimeout,
+    config.common.pgpKeyserver, config.common.defaultRoot and config.sysrootOption.isNone,
     config.common.ignorePkgs, config.common.ignoreGroups),
     root, db, cache, userCacheInitial, userCacheCurrent, tmpRootInitial, tmpRootCurrent,
     color, aurRepo, aurComments, checkIgnored, ignoreArch, printAurNotFound, printLocalIsNewer,

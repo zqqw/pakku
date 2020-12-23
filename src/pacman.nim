@@ -350,6 +350,7 @@ proc createConfigFromTable(table: Table[string, string], dbs: seq[string]): Pacm
   let cacheRel = table.opt("CacheDir")
   let gpgRel = table.opt("GPGDir")
   let color = if table.hasKey("Color"): ColorMode.colorAuto else: ColorMode.colorNever
+  let chomp = table.hasKey("ILoveCandy")
   let verbosePkgLists = table.hasKey("VerbosePkgLists")
   let downloadTimeout = not table.hasKey("DisableDownloadTimeout")
   let arch = table.opt("Architecture").get("auto")
@@ -361,7 +362,7 @@ proc createConfigFromTable(table: Table[string, string], dbs: seq[string]): Pacm
     raise commandError(tr"can not get the architecture",
       colorNeeded = some(color.get))
 
-  ((dbs, archFinal, false, true, verbosePkgLists, downloadTimeout, none(string), true,
+  ((dbs, archFinal, false, true, chomp, verbosePkgLists, downloadTimeout, none(string), true,
     ignorePkgs, ignoreGroups), none(string), rootRel, dbRel, cacheRel, gpgRel, color)
 
 proc obtainPacmanConfig*(args: seq[Argument]): PacmanConfig =
@@ -440,7 +441,7 @@ proc obtainPacmanConfig*(args: seq[Argument]): PacmanConfig =
   let argsRootRel = rootRel.get("/")
   let defaultRoot = defaultRootRel == argsRootRel
 
-  let config: PacmanConfig = ((defaultConfig.common.dbs, arch, debug, progressBar,
+  let config: PacmanConfig = ((defaultConfig.common.dbs, arch, debug, progressBar, defaultConfig.common.chomp,
     defaultConfig.common.verbosePkgLists, defaultConfig.common.downloadTimeout and downloadTimeout,
     pgpKeyserver, defaultRoot, ignorePkgs + defaultConfig.common.ignorePkgs,
     ignoreGroups + defaultConfig.common.ignoreGroups),
