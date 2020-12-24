@@ -42,7 +42,7 @@ proc createCloneProgress(config: Config, count: int, flexible: bool, printMode: 
   (proc (update: int, terminate: int) {.closure.}, proc {.closure.}) =
   if count >= 1 and not printMode:
     let (update, terminate) = printProgressShare(config.common.progressBar,
-      tr"cloning repositories")
+      config.common.chomp, tr"cloning repositories")
     update(0, count)
 
     if flexible:
@@ -963,12 +963,12 @@ proc filterIgnoresAndConflicts(config: Config, pkgInfos: seq[PackageInfo],
   let nonConflicingPkgInfos = acceptedPkgInfos.foldl(block:
     let conflictsWith = collect(newSeq):
       for p in a:
-        if p.rpc.name != b.rpc.name and 
+        if p.rpc.name != b.rpc.name and
             (block:collect(newSeq):
               for c in b.conflicts:
                 if c.isProvidedBy(p.rpc.toPackageReference, true):
                   0
-            ).len>0 or 
+            ).len>0 or
             (block:collect(newSeq):
               for c in p.conflicts:
                 if c.isProvidedBy(p.rpc.toPackageReference, true):
