@@ -292,13 +292,13 @@ proc execRedirect*(args: varargs[string]): int =
     return -1
   var outp = outputStream(p)
   close(inputStream(p))
-  var line = newStringOfCap(120).TaintedString
+  var line = newStringOfCap(120)
   while true:
     if outp.readLine(line):
       if writeFlag == false:
-        echo line.string
+        echo line
       else:
-        discard write(fd[1], line.string.cstring, len(line.string))
+        discard write(fd[1], line.cstring, len(line))
         discard write(fd[1], "\n".cstring, 1)
     else:
       code = peekExitCode(p)
@@ -311,7 +311,7 @@ proc dropPrivileges*(): bool =
   if initialUser.isSome:
     let user = initialUser.unsafeGet
     var groups = user.groups.map(x => x.cint)
-    
+
     if setgroups(cast[csize_t](user.groups.len), addr(groups[0])) < 0:
       return false
     if setgid((Gid) user.gid) != 0:
