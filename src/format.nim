@@ -291,13 +291,13 @@ macro choices*(choices: varargs[untyped]): untyped =
     case choice.kind:
       of nnkCharLit:
         result.add(newPar(choice, newCall(ident("none"), ident("string"))))
-      of nnkPar:
+      of nnkPar,nnkTupleConstr:
         if choice.len == 2:
           result.add(newPar(choice[0], newCall(ident("some"), choice[1])))
         else:
-          error("error")
+          error("error expected 2 items got " & $choice.len)
       else:
-        error("error")
+        error("error got " & $choice.kind)
 
 proc printProgressFull*(bar: bool, chomp: bool, title: string): ((string, float) -> void, () -> void) =
   let width = getWindowSize().width

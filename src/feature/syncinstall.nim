@@ -39,7 +39,7 @@ proc groupsSeq(pkg: ptr AlpmPackage): seq[string] =
   toSeq(pkg.groups.items).map(s => $s)
 
 proc createCloneProgress(config: Config, count: int, flexible: bool, printMode: bool):
-  (proc (update: int, terminate: int) {.closure.}, proc {.closure.}) =
+  (proc (update: int, terminate: int) {.closure.}, proc() {.closure.}) =
   if count >= 1 and not printMode:
     let (update, terminate) = printProgressShare(config.common.progressBar,
       config.common.chomp, tr"cloning repositories")
