@@ -1,7 +1,7 @@
 --- a/zsh
 +++ b/zsh
 @@ -1,1 +1,1 @@
--#compdef pacman pacman.static=pacman pacman-key makepkg
+-#compdef pacman pacman.static=pacman pacman-conf pacman-key makepkg
 +#compdef pakku
 @@ -139,2 +139,6 @@
  	'--print-format[Specify how the targets should be printed]'
@@ -30,12 +30,15 @@
 @@ -371,1 +380,1 @@
 -_pakku_zsh_comp() {
 +_pakku_comp() {
-@@ -501,17 +510,0 @@
+@@ -596,20 +616,0 @@
 -
 -_pakku_comp() {
 -	case "$service" in
 -		makepkg)
 -			_makepkg "$@"
+-			;;
+-		pacman-conf)
+-			_pakku_conf "$@"
 -			;;
 -		pacman-key)
 -			_pakku_key "$@"

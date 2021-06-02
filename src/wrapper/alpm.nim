@@ -43,8 +43,8 @@ proc newAlpmHandle*(root: cstring, dbpath: cstring, err: var cint): ptr AlpmHand
 proc release*(handle: ptr AlpmHandle): cint
   {.cdecl, importc: "alpm_release".}
 
-proc setArch*(handle: ptr AlpmHandle, arch: cstring): cint
-  {.cdecl, importc: "alpm_option_set_arch".}
+proc addArch*(handle: ptr AlpmHandle, arch: cstring): cint
+  {.cdecl, importc: "alpm_option_add_architecture".}
 
 proc vercmp*(a: cstring, b: cstring): cint
   {.cdecl, importc: "alpm_pkg_vercmp".}
@@ -137,7 +137,7 @@ template withAlpm*(root: string, db: string, dbs: seq[string], arch: string,
           .replace("%s", "$#") % [dbName, $handle.errno.errorAlpm]
 
     try:
-      discard handle.setArch(arch)
+      discard handle.addArch(arch)
       body
     finally:
       discard handle.release()
