@@ -25,7 +25,7 @@ proc handleSyncSearch*(args: seq[Argument], config: Config): int =
           for e in errors: printError(config.color, e)
 
           aurPackages.map(proc (rpcInfo: RpcPackageInfo): Package =
-            let pkg = handle.local[rpcInfo.name]
+            let pkg = handle.local[cstring(rpcInfo.name)]
             if pkg != nil:
               (rpcInfo, some($pkg.version))
             else:

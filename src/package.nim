@@ -195,7 +195,7 @@ proc isProvidedBy*(package: PackageReference, by: PackageReference, checkVersion
     else:
       let lcon = package.constraint.unsafeGet
       let rcon = by.constraint.unsafeGet
-      let cmp = vercmp(lcon.version, rcon.version)
+      let cmp = vercmp(cstring(lcon.version), cstring(rcon.version))
       checkConstraints(lcon.operation, rcon.operation, cmp)
   else:
     false

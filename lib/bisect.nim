@@ -44,4 +44,4 @@ proc handleBisect*(params: seq[string]): int =
 
       # this output is required by main program
       echo(version)
-      if vercmp(compareVersion, version) > 0: 0 else: 1
+      if vercmp(cstring(compareVersion), cstring(version)) > 0: 0 else: 1

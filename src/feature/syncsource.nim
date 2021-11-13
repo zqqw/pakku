@@ -92,7 +92,7 @@ proc copyFiles(config: Config, quiet: bool, results: seq[CloneResult]): List[str
       messages.reversed
     else:
       let res = results[index]
-      discard mkdir(res.destination, 0o755)
+      discard mkdir(cstring(res.destination), 0o755)
 
       let error = try:
         for f in res.files:
@@ -144,7 +144,7 @@ proc cloneAndCopy(config: Config, quiet: bool, fullTargets: seq[FullPackageTarge
 
   for result in results:
     removeDirQuiet(result.path)
-  discard rmdir(config.tmpRootCurrent)
+  discard rmdir(cstring(config.tmpRootCurrent))
 
   if rerrors.len > 0 or cerrors != nil:
     1

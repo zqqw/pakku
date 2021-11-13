@@ -281,7 +281,7 @@ proc findDependencies(config: Config, handle: ptr AlpmHandle,
 template clearPaths(paths: untyped) =
   for path in paths:
     removeDirQuiet(path)
-  discard rmdir(config.tmpRootInitial)
+  discard rmdir(cstring(config.tmpRootInitial))
 
 proc printUnsatisfied(config: Config,
   satisfied: Table[PackageReference, SatisfyResult], unsatisfied: seq[PackageReference]) =
@@ -296,7 +296,7 @@ proc printUnsatisfied(config: Config,
 
 template dropPrivilegesAndChdir(path: Option[string], body: untyped): int =
   if dropPrivileges():
-    if path.isNone or chdir(path.unsafeGet) == 0:
+    if path.isNone or chdir(cstring(path.unsafeGet)) == 0:
       body
     else:
       printError(config.color, tr"chdir failed: $#" % [path.unsafeGet])
@@ -307,7 +307,7 @@ template dropPrivilegesAndChdir(path: Option[string], body: untyped): int =
 
 template dropPrivRedirectAndChdir(path: Option[string], body: untyped): int =
   if dropPrivRedirect():
-    if path.isNone or chdir(path.unsafeGet) == 0:
+    if path.isNone or chdir(cstring(path.unsafeGet)) == 0:
       body
     else:
       printError(config.color, tr"chdir failed: $#" % [path.unsafeGet])
@@ -437,7 +437,7 @@ proc buildLoop(config: Config, pkgInfos: seq[PackageInfo], skipDeps: bool,
         file.close()
     true
   except:
-    discard unlink(workConfFile)
+    discard unlink(cstring(workConfFile))
     false
 
   if not workConfFileCopySuccess:
@@ -472,7 +472,7 @@ proc buildLoop(config: Config, pkgInfos: seq[PackageInfo], skipDeps: bool,
           execResult(@[makepkgCmd, "--config", workConfFile, "--force"] &
             optional.filter(o => o.cond).map(o => o.arg)))
 
-    discard unlink(workConfFile)
+    discard unlink(cstring(workConfFile))
 
     if interrupted:
       (none(BuildResult), buildCode, interrupted)
@@ -627,7 +627,7 @@ proc installGroupFromSources(config: Config, commonArgs: seq[Argument],
         let local = handle.local
         install.map(proc (pkg: auto): tuple[name: string, file: string, mode: string] =
           let explicit = pkg.name in explicits
-          let package = local[pkg.name]
+          let package = local[cstring(pkg.name)]
           let mode = if package != nil: (block:
             let installedExplicitly = package.reason == AlpmReason.explicit
             if explicit == installedExplicitly:
@@ -918,7 +918,7 @@ proc printAllWarnings(config: Config, installed: seq[Installed], rpcInfos: seq[R
         installedTable.hasKey(pkgInfo.rpc.name):
         let installedVersion = installedTable[pkgInfo.rpc.name].version
         let newVersion = pkgInfo.rpc.version
-        if vercmp(newVersion, installedVersion) < 0:
+        if vercmp(cstring(newVersion), cstring(installedVersion)) < 0:
           printWarning(config.color, tra("%s: ignoring package downgrade (%s => %s)\n") %
             [pkgInfo.rpc.name, installedVersion, newVersion])
         else:
@@ -932,7 +932,7 @@ proc printAllWarnings(config: Config, installed: seq[Installed], rpcInfos: seq[R
       if installedTable.hasKey(pkgInfo.rpc.name):
         let installedVersion = installedTable[pkgInfo.rpc.name].version
         let newVersion = pkgInfo.rpc.version
-        if vercmp(newVersion, installedVersion) < 0 and not pkgInfo.rpc.name.isVcs:
+        if vercmp(cstring(newVersion), cstring(installedVersion)) < 0 and not pkgInfo.rpc.name.isVcs:
           printWarning(config.color,
             tra("%s: downgrading from version %s to version %s\n") %
             [pkgInfo.rpc.name, installedVersion, newVersion])
@@ -991,7 +991,7 @@ proc checkNeeded(installed: Table[string, Installed],
   name: string, version: string, downgrade: bool): tuple[needed: bool, vercmp: int] =
   if installed.hasKey(name):
     let i = installed[name]
-    let vercmp = vercmp(version, i.version)
+    let vercmp = vercmp(version, cstring(i.version))
     let needed = if downgrade: vercmp != 0 else: vercmp > 0
     (needed, vercmp.int)
   else:

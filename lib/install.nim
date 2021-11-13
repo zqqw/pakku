@@ -10,7 +10,7 @@ proc splitCommands(params: seq[string], index: int, res: seq[seq[string]]): seq[
     res
 
 proc perror*(s: cstring): void {.importc, header: "<stdio.h>".}
-template perror*: void = perror(paramStr(0))
+template perror*: void = perror(cstring(paramStr(0)))
 
 proc runCommand(params: seq[string], inputOutput: bool): int =
   if params.len > 0:
@@ -67,7 +67,7 @@ proc handleInstall*(params: seq[string]): int =
         let name = if index >= 0: pkg.file[index + 1 .. ^1] else: pkg.file
         let dest = destination & "/" & name
         copyFile(pkg.file, dest)
-        discard chown(dest, (Uid) uid, (Gid) gid)
+        discard chown(cstring(dest), (Uid) uid, (Gid) gid)
       except:
         discard
 

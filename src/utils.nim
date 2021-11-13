@@ -117,7 +117,7 @@ proc groupBy*[T, X](s: seq[T], callback: T -> X): seq[tuple[key: X, values: seq[
     result &= (key, values[])
 
 proc perror*(s: cstring): void {.importc, header: "<stdio.h>".}
-template perror*: void = perror(getAppFilename())
+template perror*: void = perror(cstring(getAppFilename()))
 
 proc execResult*(args: varargs[string]): int =
   let cexec = allocCStringArray(args)
@@ -319,15 +319,15 @@ proc dropPrivileges*(): bool =
     if setuid((Uid) user.uid) != 0:
       return false
 
-    template replaceExisting(name: string, value: string) =
+    template replaceExisting(name: string, value: cstring) =
       if cgetenv(name) != nil:
         discard csetenv(name, value, 1)
 
-    replaceExisting("USER", user.name)
-    replaceExisting("USERNAME", user.name)
-    replaceExisting("LOGNAME", user.name)
-    replaceExisting("HOME", user.home)
-    replaceExisting("SHELL", user.shell)
+    replaceExisting("USER", cstring(user.name))
+    replaceExisting("USERNAME", cstring(user.name))
+    replaceExisting("LOGNAME", cstring(user.name))
+    replaceExisting("HOME", cstring(user.home))
+    replaceExisting("SHELL", cstring(user.shell))
 
     discard cunsetenv("SUDO_COMMAND")
     discard cunsetenv("SUDO_USER")

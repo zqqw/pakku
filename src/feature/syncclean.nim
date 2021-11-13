@@ -41,10 +41,10 @@ proc handleSyncClean*(args: seq[Argument], config: Config): int =
               let index = file.path.rfind('/')
               let dirName = if index >= 0: file.path[index + 1 .. ^1] else: file.path
               for name in bareFullNameDeconstruct(BareKind.pkg, dirName):
-                if cleanCount >= 2 or local[name] == nil:
+                if cleanCount >= 2 or local[cstring(name)] == nil:
                   removeDirQuiet(file.path)
 
-      discard rmdir(reposCacheDir)
-      discard rmdir(config.userCacheCurrent)
+      discard rmdir(cstring(reposCacheDir))
+      discard rmdir(cstring(config.userCacheCurrent))
 
     0

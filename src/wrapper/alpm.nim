@@ -116,11 +116,11 @@ proc freeListFull*[T](list: ptr AlpmList[T]) =
   list.freeListInner(cfree)
   list.freeList()
 
-template withAlpm*(root: string, db: string, dbs: seq[string], arch: string,
+template withAlpm*(root: cstring, db: string, dbs: seq[string], arch: cstring,
   handle: untyped, alpmDbs: untyped, errors: untyped, body: untyped): untyped =
   block:
     var errno: cint = 0
-    let handle = newAlpmHandle(root, db, errno)
+    let handle = newAlpmHandle(root, cstring(db), errno)
 
     if handle == nil:
       raise commandError(trp("failed to initialize alpm library\n(%s: %s)\n").strip
@@ -129,7 +129,7 @@ template withAlpm*(root: string, db: string, dbs: seq[string], arch: string,
     var alpmDbs = newSeq[ptr AlpmDatabase]()
     var errors = newSeq[string]()
     for dbName in dbs:
-      let alpmDb = handle.register(dbName, 1 shl 30)
+      let alpmDb = handle.register(cstring(dbName), 1 shl 30)
       if alpmDb != nil:
         alpmDbs &= alpmDb
       else:

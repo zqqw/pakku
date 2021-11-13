@@ -140,7 +140,7 @@ proc findSyncTargets*(handle: ptr AlpmHandle, dbs: seq[ptr AlpmDatabase],
 
       if dbTable.hasKey(repo):
         let db = dbTable[repo]
-        let pkg = db[target.reference.name]
+        let pkg = db[cstring(target.reference.name)]
 
         if pkg != nil and target.reference.isProvidedBy(pkg.toPackageReference, true):
           let base = if pkg.base == nil: target.reference.name else: $pkg.base
@@ -164,7 +164,7 @@ proc findSyncTargets*(handle: ptr AlpmHandle, dbs: seq[ptr AlpmDatabase],
 
       let directResults = dbs
         .map(db => (block:
-          let pkg = db[target.reference.name]
+          let pkg = db[cstring(target.reference.name)]
           if pkg != nil and target.reference.isProvidedBy(pkg.toPackageReference, true):
             let base = if pkg.base == nil: target.reference.name else: $pkg.base
             some(($db.name, some((base, $pkg.version, some($pkg.arch)))))
@@ -318,7 +318,7 @@ proc createDirRecursive(dir: string, chownUser: Option[User]): bool =
       try:
         let exists = path.existsOrCreateDir()
         if chownUser.isSome and (not exists or index == segments.len - 1):
-          discard chown(path, (Uid) chownUser.unsafeGet.uid, (Gid) chownUser.unsafeGet.gid)
+          discard chown(cstring(path), (Uid) chownUser.unsafeGet.uid, (Gid) chownUser.unsafeGet.gid)
         createDirIndex(index + 1)
       except:
         false
@@ -626,7 +626,7 @@ proc obtainBuildPkgInfosInternal(config: Config, bases: seq[LookupBaseGroup],
         dropPrivileges)
 
       if berrors.len > 0:
-        discard rmdir(config.tmpRoot(dropPrivileges))
+        discard rmdir(cstring(config.tmpRoot(dropPrivileges)))
         (newSeq[PackageInfo](), newSeq[string](), berrors)
       else:
         proc findCommitAndGetSrcInfo(base: string, version: string,
@@ -673,7 +673,7 @@ proc obtainBuildPkgInfosInternal(config: Config, bases: seq[LookupBaseGroup],
         if errorMessages.len > 0:
           for path in paths:
             removeDirQuiet(path)
-        discard rmdir(config.tmpRoot(dropPrivileges))
+        discard rmdir(cstring(config.tmpRoot(dropPrivileges)))
         (foundPkgInfos, paths, errorMessages)
 
 proc obtainBuildPkgInfos*(config: Config, pacmanTargets: seq[FullPackageTarget],
@@ -783,5 +783,5 @@ proc cloneAurReposWithPackageInfos*(config: Config, rpcInfos: seq[RpcPackageInfo
   let names = rpcInfos.map(i => i.name).toHashSet
   let additionalPkgInfos = fullPkgInfos.filter(i => not (i.rpc.name in names))
 
-  discard rmdir(config.tmpRoot(dropPrivileges))
+  discard rmdir(cstring(config.tmpRoot(dropPrivileges)))
   (resultPkgInfos, additionalPkgInfos, paths, errors)
