@@ -40,12 +40,17 @@ proc cloneRepositories(config: Config, targets: seq[BaseTarget],
 
   proc cloneNext(index: int, results: List[CloneResult], messages: List[string]):
     (List[CloneResult], List[string]) =
+    isArtix = false
     update(bcount + index, bcount + targets.len)
 
     if index >= targets.len:
       (results.reversed, messages.reversed)
     else:
       let target = targets[index]
+      if target.gitRepo.isSome:
+        if target.gitRepo.unsafeGet.branch.isSome:
+          if target.gitRepo.unsafeGet.branch.unsafeGet == "artixrepo":
+            isArtix = true
       let repoPath = repoPath(config.tmpRootCurrent, target.base)
       removeDirQuiet(repoPath)
 
@@ -70,7 +75,10 @@ proc cloneRepositories(config: Config, targets: seq[BaseTarget],
         if cerror.isSome:
           cloneNext(index + 1, results, cerror.unsafeGet ^& messages)
         else:
-          let (files, ferror) = getFilesOrClear(target.base, repoPath, some(gitRepo.path))
+          var (files, ferror) = getFilesOrClear(target.base, repoPath, some(gitRepo.path))
+          if isArtix == true:
+            for i in 0 ..< files.len:
+              files[i] = "/trunk" & files[i]
           if ferror.isSome:
             cloneNext(index + 1, results, ferror.unsafeGet ^& messages)
           else:
@@ -93,7 +101,6 @@ proc copyFiles(config: Config, quiet: bool, results: seq[CloneResult]): List[str
     else:
       let res = results[index]
       discard mkdir(cstring(res.destination), 0o755)
-
       let error = try:
         for f in res.files:
           let index = f.rfind('/')

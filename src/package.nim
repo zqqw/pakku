@@ -73,6 +73,18 @@ type
 
 const
   packageRepos: seq[PackageRepo] = @[
+    (["artix"].toHashSet,
+      ["system", "world", "galaxy", "lib32"].toHashSet,
+      ("https://gitea.artixlinux.org/packages", none(string), #bareName should be none
+        some("artixrepo"), "")),       #branch should be some
+    (["artix"].toHashSet,
+      ["extra"].toHashSet,
+      ("https://git.archlinux.org/svntogit/packages.git", none(string),
+        some("packages/${BASE}"), "repos/${REPO}-${ARCH}")),
+    (["artix"].toHashSet,
+      ["community"].toHashSet,
+      ("https://git.archlinux.org/svntogit/community.git", none(string),
+        some("packages/${BASE}"), "repos/${REPO}-${ARCH}")),
     (["arch", "parabola"].toHashSet,
       ["core", "extra", "testing"].toHashSet,
       ("https://git.archlinux.org/svntogit/packages.git", none(string),

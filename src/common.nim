@@ -44,6 +44,8 @@ type
     repo: string
   ]
 
+var isArtix*: bool
+
 proc checkAndRefreshUpgradeInternal(color: bool, upgrade: bool, args: seq[Argument]):
   tuple[code: int, args: seq[Argument]] =
   let refreshCount = args.count(%%%"refresh")
@@ -344,22 +346,27 @@ proc ensureUserCacheOrError*(config: Config, cacheKind: CacheKind,
 
 proc getGitFiles*(repoPath: string, gitSubdir: Option[string],
   dropPrivileges: bool): seq[string] =
-  if gitSubdir.isSome:
-    forkWaitRedirect(() => (block:
-      if not dropPrivileges or dropPrivRedirect():
-        execRedirect(gitCmd, "-C", repoPath, "ls-tree", "-r", "--name-only", "@",
-          gitSubdir.unsafeGet & "/")
-      else:
-        quit(1)))
-      .output
-      .map(s => s[gitSubdir.unsafeGet.len + 1 .. ^1])
+  if isArtix == true:
+    let trunkpath = repoPath & "/trunk"
+    toSeq(walkDir(trunkPath)).mapIt(it.path.extractFilename)
   else:
-    forkWaitRedirect(() => (block:
-      if not dropPrivileges or dropPrivRedirect():
-        execRedirect(gitCmd, "-C", repoPath, "ls-tree", "-r", "--name-only", "@")
-      else:
-        quit(1)))
-      .output
+    if gitSubdir.isSome:
+      forkWaitRedirect(() => (block:
+        if not dropPrivileges or dropPrivRedirect():
+          execRedirect(gitCmd, "-C", repoPath, "ls-tree", "-r", "--name-only", "@",
+            gitSubdir.unsafeGet & "/")
+        else:
+          quit(1)))
+        .output
+        .map(s => s[gitSubdir.unsafeGet.len + 1 .. ^1])
+    else:
+      forkWaitRedirect(() => (block:
+        if not dropPrivileges or dropPrivRedirect():
+          execRedirect(gitCmd, "-C", repoPath, "ls-tree", "-r", "--name-only", "@")
+        else:
+          quit(1)))
+        .output
+
 
 proc bisectVersion(repoPath: string, debug: bool, firstCommit: Option[string],
   compareMethod: string, gitSubdir: string, version: string,
@@ -553,6 +560,39 @@ proc cloneBareRepos*(config: Config, bareKind: BareKind, gitRepos: seq[GitRepo],
 
     (bare.len, cloneNext(0, nil))
 
+# todo - add bisect backup
+proc artixVersion(repoPath: string, debug: bool, version: string,
+  dropPrivileges: bool): Option[string] =
+
+  template forkExecWithoutOutput(args: varargs[string]): int =
+    forkWait(() => (block:
+      discard close(0)
+      if not debug:
+        discard close(1)
+        discard close(2)
+      if not dropPrivileges or dropPrivileges():
+        execResult(args)
+      else:
+        quit(1)))
+
+  var commandOutput: tuple[output: seq[string], code: int]
+  commandOutput = forkWaitRedirect(() => (block:
+    if not dropPrivileges or dropPrivRedirect():
+      execRedirect(gitCmd, "-C", repoPath, "log", "--fixed-strings", "--no-abbrev-commit", "--format=format:%H", "--grep", version)
+    else:
+      quit(1)))
+  for i in countdown(commandOutput.output.len - 1, 0):
+    if forkExecWithoutOutput(gitCmd, "-C", repoPath, "checkout", commandOutput.output[i]) == 0:
+      let foundVersion = forkWaitRedirect(() => (block:
+        if not dropPrivileges or dropPrivRedirect():
+          execRedirect(pkgLibDir & "/bisect", "source", repoPath & "/trunk", version, "true")
+        else:
+          quit(1)))
+      if foundVersion.code == 1:
+        return commandOutput.output[i].option
+  none(string)
+
+
 proc clonePackageRepoInternal(config: Config, base: string, version: string,
   git: GitRepo, dropPrivileges: bool): Option[string] =
   let repoPath = repoPath(config.tmpRoot(dropPrivileges), base)
@@ -563,20 +603,32 @@ proc clonePackageRepoInternal(config: Config, base: string, version: string,
         bareFullName(BareKind.repo, git.bareName.unsafeGet))
     else:
       git.url
-
   if forkWait(() => (block:
     if not dropPrivileges or dropPrivileges():
       if git.branch.isSome:
-        execResult(gitCmd, "-C", config.tmpRoot(dropPrivileges),
-          "clone", "-q", url, "-b", git.branch.unsafeGet, "--single-branch", base)
+        if isArtix == true:
+          var artixUrl: string = git.url
+          artixUrl.add(capitalizeAscii($(base[0])) & "/" & $(base) & ".git")
+          execResult(gitCmd, "-C", config.tmpRoot(dropPrivileges), "clone", "-q", artixUrl)
+        else:
+          execResult(gitCmd, "-C", config.tmpRoot(dropPrivileges),
+            "clone", "-q", url, "-b", git.branch.unsafeGet, "--single-branch", base)
       else:
         execResult(gitCmd, "-C", config.tmpRoot(dropPrivileges),
           "clone", "-q", url, "--single-branch", base)
     else:
       quit(1))) == 0:
-    let commit = bisectVersion(repoPath, config.common.debug, none(string),
-      "source", git.path, version, dropPrivileges)
-
+    var commit: Option[string]
+    if isArtix == false:
+      commit = bisectVersion(repoPath, config.common.debug, none(string),
+        "source", git.path, version, dropPrivileges)
+    else:
+      commit = artixVersion(repoPath, config.common.debug, version, dropPrivileges)
+      if commit.isSome:
+        return some(repoPath)
+      else:
+        removeDirQuiet(repoPath)
+        return none(string)
     if commit.isNone:
       removeDirQuiet(repoPath)
       none(string)
@@ -587,7 +639,6 @@ proc clonePackageRepoInternal(config: Config, base: string, version: string,
             "checkout", "-q", commit.unsafeGet)
         else:
           quit(1)))
-
       some(repoPath)
   else:
     removeDirQuiet(repoPath)
