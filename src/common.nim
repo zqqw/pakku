@@ -45,6 +45,8 @@ type
   ]
 
 var isArtix*: bool
+var isArch*: bool
+var isParabola*: bool
 
 proc checkAndRefreshUpgradeInternal(color: bool, upgrade: bool, args: seq[Argument]):
   tuple[code: int, args: seq[Argument]] =
@@ -125,7 +127,7 @@ proc printSyncNotFound*(config: Config, notFoundTargets: seq[SyncPackageTarget])
       printError(config.color, trp("database not found: %s\n") % [sync.target.repo.unsafeGet])
 
 proc findSyncTargets*(handle: ptr AlpmHandle, dbs: seq[ptr AlpmDatabase],
-  targets: seq[PackageTarget], aurRepo: string, allowGroups: bool, checkProvides: bool):
+  targets: seq[PackageTarget], aurRepo: string, allowGroups: bool, checkProvides: bool, checkVersion: bool):
   (seq[SyncPackageTarget], seq[string]) =
   let dbTable = dbs.map(d => ($d.name, d)).toTable
 
@@ -167,7 +169,7 @@ proc findSyncTargets*(handle: ptr AlpmHandle, dbs: seq[ptr AlpmDatabase],
       let directResults = dbs
         .map(db => (block:
           let pkg = db[cstring(target.reference.name)]
-          if pkg != nil and target.reference.isProvidedBy(pkg.toPackageReference, true):
+          if pkg != nil and target.reference.isProvidedBy(pkg.toPackageReference, checkVersion):
             let base = if pkg.base == nil: target.reference.name else: $pkg.base
             some(($db.name, some((base, $pkg.version, some($pkg.arch)))))
           else:
@@ -346,7 +348,7 @@ proc ensureUserCacheOrError*(config: Config, cacheKind: CacheKind,
 
 proc getGitFiles*(repoPath: string, gitSubdir: Option[string],
   dropPrivileges: bool): seq[string] =
-  if isArtix == true:
+  if isArtix == true or isArch == true:
     let trunkpath = repoPath & "/trunk"
     toSeq(walkDir(trunkPath)).mapIt(it.path.extractFilename)
   else:
@@ -619,7 +621,7 @@ proc clonePackageRepoInternal(config: Config, base: string, version: string,
     else:
       quit(1))) == 0:
     var commit: Option[string]
-    if isArtix == false:
+    if isParabola == true:
       commit = bisectVersion(repoPath, config.common.debug, none(string),
         "source", git.path, version, dropPrivileges)
     else:

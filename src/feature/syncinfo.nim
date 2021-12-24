@@ -109,7 +109,7 @@ proc handleSyncInfo*(args: seq[Argument], config: Config): int =
 
     let (syncTargets, checkAurNames) = withAlpmConfig(config, true, handle, dbs, errors):
       for e in errors: printError(config.color, e)
-      findSyncTargets(handle, dbs, targets, config.aurRepo, false, false)
+      findSyncTargets(handle, dbs, targets, config.aurRepo, false, false, true)
 
     let (pkgInfos, _, aerrors) = getAurPackageInfos(checkAurNames,
       config.aurRepo, config.common.arch, config.common.downloadTimeout)

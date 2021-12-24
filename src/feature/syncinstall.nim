@@ -1400,7 +1400,7 @@ proc resolveAurTargets(config: Config, targets: seq[PackageTarget], printMode: b
   build: bool): (int, seq[SyncPackageTarget], seq[FullPackageTarget]) =
   let (syncTargets, checkAurTargetNames) = withAlpmConfig(config, true, handle, dbs, errors):
     for e in errors: printError(config.color, e)
-    findSyncTargets(handle, dbs, targets, config.aurRepo, not build, not build)
+    findSyncTargets(handle, dbs, targets, config.aurRepo, not build, not build, true)
 
   let rpcInfos = if not noaur and checkAurTargetNames.len > 0: (block:
       if not printMode:

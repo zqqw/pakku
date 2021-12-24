@@ -41,6 +41,8 @@ proc cloneRepositories(config: Config, targets: seq[BaseTarget],
   proc cloneNext(index: int, results: List[CloneResult], messages: List[string]):
     (List[CloneResult], List[string]) =
     isArtix = false
+    isArch = false
+    isParabola = false
     update(bcount + index, bcount + targets.len)
 
     if index >= targets.len:
@@ -51,6 +53,11 @@ proc cloneRepositories(config: Config, targets: seq[BaseTarget],
         if target.gitRepo.unsafeGet.branch.isSome:
           if target.gitRepo.unsafeGet.branch.unsafeGet == "artixrepo":
             isArtix = true
+        if contains(target.gitRepo.unsafeGet.url, "https://github.com/archlinux/"):
+          isArch = true
+        if target.gitRepo.unsafeGet.barename.isSome:
+          if target.gitRepo.unsafeGet.barename.unsafeGet == "parabola":
+            isParabola = true
       let repoPath = repoPath(config.tmpRootCurrent, target.base)
       removeDirQuiet(repoPath)
 
@@ -76,9 +83,9 @@ proc cloneRepositories(config: Config, targets: seq[BaseTarget],
           cloneNext(index + 1, results, cerror.unsafeGet ^& messages)
         else:
           var (files, ferror) = getFilesOrClear(target.base, repoPath, some(gitRepo.path))
-          if isArtix == true:
+          if isArtix == true or isArch == true:
             for i in 0 ..< files.len:
-              files[i] = "/trunk" & files[i]
+              files[i] = "trunk" & files[i]
           if ferror.isSome:
             cloneNext(index + 1, results, ferror.unsafeGet ^& messages)
           else:
@@ -128,11 +135,14 @@ proc cloneAndCopy(config: Config, quiet: bool, fullTargets: seq[FullPackageTarge
           some(rpcInfo.gitUrl), none(GitRepo))
     else:
       let foundInfo = b.sync.foundInfos[0]
-      let pkg = foundInfo.pkg.get
+      var pkg = foundInfo.pkg.get
       if pkg.base in bases:
         a
       else:
         let git = lookupGitRepo(foundInfo.repo, pkg.base, pkg.arch.get)
+        if b.sync.target.reference.constraint.isSome: # use version from cmdline if given
+          if b.sync.target.reference.constraint.unsafeget.operation == ConstraintOperation.eq:
+            pkg.version = b.sync.target.reference.constraint.unsafeget.version
         a & (pkg.base, pkg.version, b.sync.target.destination.get(pkg.base), none(string), git),
     newSeq[BaseTarget]())
 
@@ -140,7 +150,6 @@ proc cloneAndCopy(config: Config, quiet: bool, fullTargets: seq[FullPackageTarge
       printProgressShare(config.common.progressBar, config.common.chomp, tr"cloning repositories")
     else:
       (proc (i0: int, i1: int) {.sideEffect,closure.} = discard, proc () {.sideEffect,closure.} = discard)
-
 
   let (results, rerrors) = cloneRepositories(config, baseTargets, update)
   terminate()
@@ -172,7 +181,7 @@ proc handleSyncSource*(args: seq[Argument], config: Config): int =
     else:
       let (syncTargets, checkAurNames) = withAlpmConfig(config, true, handle, dbs, errors):
         for e in errors: printError(config.color, e)
-        findSyncTargets(handle, dbs, targets, config.aurRepo, false, false)
+        findSyncTargets(handle, dbs, targets, config.aurRepo, false, false, false)
 
       let (rpcInfos, aerrors) = getRpcPackageInfos(checkAurNames,
         config.aurRepo, config.common.downloadTimeout)
