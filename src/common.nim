@@ -562,8 +562,7 @@ proc cloneBareRepos*(config: Config, bareKind: BareKind, gitRepos: seq[GitRepo],
 
     (bare.len, cloneNext(0, nil))
 
-# todo - add bisect backup
-proc artixVersion(repoPath: string, debug: bool, version: string,
+proc findVersion(repoPath: string, debug: bool, version: string,
   dropPrivileges: bool): Option[string] =
 
   template forkExecWithoutOutput(args: varargs[string]): int =
@@ -577,12 +576,15 @@ proc artixVersion(repoPath: string, debug: bool, version: string,
       else:
         quit(1)))
 
+# find commit containing correct version using git log grep on commit messages
+
   var commandOutput: tuple[output: seq[string], code: int]
   commandOutput = forkWaitRedirect(() => (block:
     if not dropPrivileges or dropPrivRedirect():
       execRedirect(gitCmd, "-C", repoPath, "log", "--fixed-strings", "--no-abbrev-commit", "--format=format:%H", "--grep", version)
     else:
       quit(1)))
+
   for i in countdown(commandOutput.output.len - 1, 0):
     if forkExecWithoutOutput(gitCmd, "-C", repoPath, "checkout", commandOutput.output[i]) == 0:
       let foundVersion = forkWaitRedirect(() => (block:
@@ -592,8 +594,62 @@ proc artixVersion(repoPath: string, debug: bool, version: string,
           quit(1)))
       if foundVersion.code == 1:
         return commandOutput.output[i].option
-  none(string)
 
+# find commit containing correct version by bisecting
+
+  var allRevisions: tuple[output: seq[string], code: int]
+  allRevisions = forkWaitRedirect(() => (block:
+    if not dropPrivileges or dropPrivRedirect():
+      execRedirect(gitCmd, "-C", repoPath, "log", "--fixed-strings", "--no-abbrev-commit", "--format=format:%H")
+    else:
+      quit(1)))
+  var commits: tuple[untested: seq[string], tested: seq[string], leftovers: seq[string]]
+  commits.untested = allRevisions.output
+
+  while commits.untested.len > 0:
+    var middle: int = (int)commits.untested.len / 2
+    if forkExecWithoutOutput(gitCmd, "-C", repoPath, "checkout", commits.untested[middle]) == 0:
+      let foundVersion = forkWaitRedirect(() => (block:
+        if not dropPrivileges or dropPrivRedirect():
+          execRedirect(pkgLibDir & "/bisect", "source", repoPath & "/trunk", version, "true")
+        else:
+          quit(1)))
+
+      if foundVersion.code == 1:
+        return commits.untested[middle].option
+      commits.tested.add(commits.untested[middle])
+      if foundVersion.code == 2:
+        when NimVersion >= "1.6.0": # temporary version fix, delete in future
+          commits.untested.delete(middle..(commits.untested.len - 1))
+        else:
+          commits.untested.delete(middle, (commits.untested.len - 1))
+      if foundVersion.code == 0:
+        when NimVersion >= "1.6.0":
+          commits.untested.delete(0..middle)
+        else:
+          commits.untested.delete(0, middle)
+      if foundVersion.code > 2:  # allow for other errors like missing file or version
+        commits.untested.delete(middle)
+
+# find commit containing correct version by trying every commit not yet tested
+
+  for i in countdown(allRevisions.output.len - 1, 0):
+    for j in (0..commits.tested.len - 1):
+      if allRevisions.output[i] == commits.tested[j]:
+        allRevisions.output.delete(i)
+        break
+
+  for i in (0 .. allRevisions.output.len - 1):
+    if forkExecWithoutOutput(gitCmd, "-C", repoPath, "checkout", allRevisions.output[i]) == 0:
+      let foundVersion = forkWaitRedirect(() => (block:
+        if not dropPrivileges or dropPrivRedirect():
+          execRedirect(pkgLibDir & "/bisect", "source", repoPath & "/trunk", version, "true")
+        else:
+          quit(1)))
+      if foundVersion.code == 1:
+        return allRevisions.output[i].option
+
+  none(string)
 
 proc clonePackageRepoInternal(config: Config, base: string, version: string,
   git: GitRepo, dropPrivileges: bool): Option[string] =
@@ -625,7 +681,7 @@ proc clonePackageRepoInternal(config: Config, base: string, version: string,
       commit = bisectVersion(repoPath, config.common.debug, none(string),
         "source", git.path, version, dropPrivileges)
     else:
-      commit = artixVersion(repoPath, config.common.debug, version, dropPrivileges)
+      commit = findVersion(repoPath, config.common.debug, version, dropPrivileges)
       if commit.isSome:
         return some(repoPath)
       else:
