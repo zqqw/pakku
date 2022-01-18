@@ -169,9 +169,17 @@ proc findSyncTargets*(handle: ptr AlpmHandle, dbs: seq[ptr AlpmDatabase],
       let directResults = dbs
         .map(db => (block:
           let pkg = db[cstring(target.reference.name)]
-          if pkg != nil and target.reference.isProvidedBy(pkg.toPackageReference, checkVersion):
+          var checkVer: bool = checkVersion
+          if target.reference.constraint.isSome: # skip version check if specified on cmdline
+            if target.reference.constraint.unsafeget.operation == ConstraintOperation.eq:
+              checkVer = false
+          if pkg != nil and target.reference.isProvidedBy(pkg.toPackageReference, checkVer):
             let base = if pkg.base == nil: target.reference.name else: $pkg.base
-            some(($db.name, some((base, $pkg.version, some($pkg.arch)))))
+            var returnVersion: string = $pkg.version
+            if target.reference.constraint.isSome: # use version from cmdline if given
+              if target.reference.constraint.unsafeget.operation == ConstraintOperation.eq:
+                returnVersion = target.reference.constraint.unsafeget.version
+            some(($db.name, some((base, returnVersion, some($pkg.arch)))))
           else:
             none(SyncFoundInfo)))
         .filter(i => i.isSome)
@@ -347,8 +355,8 @@ proc ensureUserCacheOrError*(config: Config, cacheKind: CacheKind,
   ensureDirOrError(config.userCache(dropPrivileges).cache(cacheKind), dropPrivileges)
 
 proc getGitFiles*(repoPath: string, gitSubdir: Option[string],
-  dropPrivileges: bool): seq[string] =
-  if isArtix == true or isArch == true:
+  dropPrivileges: bool, trunkPath: bool): seq[string] =
+  if trunkPath == true:
     let trunkpath = repoPath & "/trunk"
     toSeq(walkDir(trunkPath)).mapIt(it.path.extractFilename)
   else:
@@ -615,20 +623,20 @@ proc findVersion(repoPath: string, debug: bool, version: string,
         else:
           quit(1)))
 
-      if foundVersion.code == 1:
+      case foundVersion.code
+      of 1:
         return commits.untested[middle].option
-      commits.tested.add(commits.untested[middle])
-      if foundVersion.code == 2:
+      of 2:
         when NimVersion >= "1.6.0": # temporary version fix, delete in future
           commits.untested.delete(middle..(commits.untested.len - 1))
         else:
           commits.untested.delete(middle, (commits.untested.len - 1))
-      if foundVersion.code == 0:
+      of 0:
         when NimVersion >= "1.6.0":
           commits.untested.delete(0..middle)
         else:
           commits.untested.delete(0, middle)
-      if foundVersion.code > 2:  # allow for other errors like missing file or version
+      else: # allow for other errors like missing file or version
         commits.untested.delete(middle)
 
 # find commit containing correct version by trying every commit not yet tested
@@ -664,7 +672,7 @@ proc clonePackageRepoInternal(config: Config, base: string, version: string,
   if forkWait(() => (block:
     if not dropPrivileges or dropPrivileges():
       if git.branch.isSome:
-        if isArtix == true:
+        if git.url == "https://gitea.artixlinux.org/packages":
           var artixUrl: string = git.url
           artixUrl.add(capitalizeAscii($(base[0])) & "/" & $(base) & ".git")
           execResult(gitCmd, "-C", config.tmpRoot(dropPrivileges), "clone", "-q", artixUrl)
@@ -677,7 +685,7 @@ proc clonePackageRepoInternal(config: Config, base: string, version: string,
     else:
       quit(1))) == 0:
     var commit: Option[string]
-    if isParabola == true:
+    if git.branch.isNone: # parabola
       commit = bisectVersion(repoPath, config.common.debug, none(string),
         "source", git.path, version, dropPrivileges)
     else:
@@ -743,7 +751,11 @@ proc obtainBuildPkgInfosInternal(config: Config, bases: seq[LookupBaseGroup],
           let repoPath = clonePackageRepoInternal(config, base, version, git, dropPrivileges)
 
           if repoPath.isSome:
-            let srcInfo = obtainSrcInfo(repoPath.unsafeGet & "/" & git.path)
+            var srcInfo: string
+            if contains(git.url, "https://github.com/archlinux/") or git.url == "https://gitea.artixlinux.org/packages":
+              srcInfo = obtainSrcInfo(repoPath.unsafeGet & "/trunk/")
+            else:
+              srcInfo = obtainSrcInfo(repoPath.unsafeGet & "/" & git.path)
             let pkgInfos = parseSrcInfo(repo, srcInfo, config.common.arch,
               git.url, some(git.path))
               .filter(i => i.rpc.version == version)

@@ -30,6 +30,10 @@ Sync Options (apply to '-S')[[SO]]
 *-n, \--build*::
 	Build packages from source. Building is supported for directly specified
 	packages only, so it will not work for package groups or virtual packages.
+	Package version can be given. IgnorePkg in /etc/pacman.conf can be used to
+	avoid downgrades being overwritten on updates. Caution, other versions may
+	not always build or function correctly without more changes: +
+	pakku -Sn less=1:581.2-1
 
 *\--keyserver* <name>::
 	Use name as keyserver to receive keys from.
@@ -39,8 +43,9 @@ Sync Options (apply to '-S')[[SO]]
 	root path or run the program from root.
 
 *-z, \--source*::
-	Retrieve PKGBUILD source. You can specify destination directory after
-	package name: pakku -Sz bash::/tmp/bash.
+	Retrieve PKGBUILD source. Version can be specified as with -n above.
+	You can specify destination directory after package name: +
+	pakku -Sz bash::/tmp/bash
 
 Configuration
 -------------

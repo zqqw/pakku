@@ -320,7 +320,7 @@ template createViewTag(repo: string, base: string): string =
   "view-" & repo & "/" & base
 
 proc editLoop(config: Config, repo: string, base: string, repoPath: string,
-  gitSubdir: Option[string], defaultYes: bool, noconfirm: bool): char =
+  gitSubdir: Option[string], defaultYes: bool, noconfirm: bool, trunkPath: bool): char =
   let default = if defaultYes: 'y' else: 'n'
 
   proc editFileLoop(file: string): char =
@@ -351,8 +351,11 @@ proc editLoop(config: Config, repo: string, base: string, repoPath: string,
     else:
       res
 
-  let rawFiles = getGitFiles(repoPath, gitSubdir, true)
-  let files = ("PKGBUILD" & rawFiles.filter(x => x != ".SRCINFO")).deduplicate
+  let rawFiles = getGitFiles(repoPath, gitSubdir, true, trunkPath)
+  var files = ("PKGBUILD" & rawFiles.filter(x => x != ".SRCINFO")).deduplicate
+  if trunkPath == true:
+    for i in 0 ..< files.len:
+      files[i] = "trunk/" & files[i]
 
   proc editFileLoopAll(index: int): char =
     if index < files.len:
@@ -412,7 +415,9 @@ proc buildLoop(config: Config, pkgInfos: seq[PackageInfo], skipDeps: bool,
   let base = pkgInfos[0].rpc.base
   let repoPath = repoPath(config.tmpRootInitial, base)
   let gitSubdir = pkgInfos[0].rpc.gitSubdir
-  let buildPath = buildPath(repoPath, gitSubdir)
+  var buildPath = buildPath(repoPath, gitSubdir)
+  if contains(pkgInfos[0].rpc.gitUrl, "https://github.com/archlinux/") or pkgInfos[0].rpc.gitUrl == "https://gitea.artixlinux.org/packages":
+    buildPath = buildPath & "trunk/"
 
   let confFileEnv = getEnv("MAKEPKG_CONF")
   let confFile = if confFileEnv.len == 0:
@@ -520,10 +525,13 @@ proc buildFromSources(config: Config, commonArgs: seq[Argument],
   let base = pkgInfos[0].rpc.base
   let repoPath = repoPath(config.tmpRootInitial, base)
   let gitSubdir = pkgInfos[0].rpc.gitSubdir
+  var trunkPath: bool = false
+  if contains(pkgInfos[0].rpc.gitUrl, "https://github.com/archlinux/") or pkgInfos[0].rpc.gitUrl == "https://gitea.artixlinux.org/packages":
+    trunkPath = true
 
   proc loop(noextract: bool, showEditLoop: bool): (Option[BuildResult], int) =
     let res = if showEditLoop and not noconfirm:
-        editLoop(config, pkgInfos[0].rpc.repo, base, repoPath, gitSubdir, false, noconfirm)
+        editLoop(config, pkgInfos[0].rpc.repo, base, repoPath, gitSubdir, false, noconfirm, trunkPath)
       else:
         'n'
 
@@ -769,10 +777,14 @@ proc confirmViewAndImportKeys(config: Config, basePackages: seq[seq[seq[PackageI
 
       proc checkNext(index: int, skipEdit: bool, skipKeys: bool): int =
         if index < flatBasePackages.len:
+          var trunkPath: bool = false
+          var resultPkgInfos: seq[PackageInfo]
           let pkgInfos = flatBasePackages[index]
           let repo = pkgInfos[0].rpc.repo
           let base = pkgInfos[0].rpc.base
           let repoPath = repoPath(config.tmpRootInitial, base)
+          if contains(pkgInfos[0].rpc.gitUrl, "https://github.com/archlinux/") or pkgInfos[0].rpc.gitUrl == "https://gitea.artixlinux.org/packages":
+            trunkPath = true
 
           let aur = repo == config.aurRepo
 
@@ -789,13 +801,16 @@ proc confirmViewAndImportKeys(config: Config, basePackages: seq[seq[seq[PackageI
             else: (block:
               let defaultYes = aur and not config.viewNoDefault
               editLoop(config, repo, base, repoPath, pkgInfos[0].rpc.gitSubdir,
-                defaultYes, noconfirm))
+                defaultYes, noconfirm, trunkPath))
 
           if editRes == 'a':
             1
           else:
-            let resultPkgInfos = reloadPkgInfos(config,
-              repoPath & "/" & pkgInfos[0].rpc.gitSubdir.get("."), pkgInfos)
+            if trunkPath == true:
+              resultPkgInfos = reloadPkgInfos(config, repoPath & "/trunk/", pkgInfos)
+            else:
+              resultPkgInfos = reloadPkgInfos(config,
+                repoPath & "/" & pkgInfos[0].rpc.gitSubdir.get("."), pkgInfos)
             let pgpKeys = deduplicate:
               collect(newSeq):
                 for p in resultPkgInfos:
@@ -840,6 +855,8 @@ proc confirmViewAndImportKeys(config: Config, basePackages: seq[seq[seq[PackageI
                   if importCode == 0 or newSkipKeys or noconfirm:
                     keysLoop(index + 1, newSkipKeys)
                   else:
+                    if importCode != 0:
+                      echo(tr"Error - gpg return code = ", importCode)
                     keysLoop(index, newSkipKeys)
                 elif res == 'n':
                   keysLoop(index + 1, newSkipKeys)

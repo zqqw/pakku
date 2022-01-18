@@ -20,9 +20,9 @@ type
     destination: string
   ]
 
-proc getFilesOrClear(base: string, repoPath: string, gitSubdir: Option[string]):
+proc getFilesOrClear(base: string, repoPath: string, gitSubdir: Option[string], trunkPath: bool):
   (seq[string], Option[string]) =
-  let rawFiles = getGitFiles(repoPath, gitSubdir, false)
+  let rawFiles = getGitFiles(repoPath, gitSubdir, false, trunkPath)
     .filter(f => f != ".gitignore" and f != ".SRCINFO" and f.find('/') < 0)
     .map(f => gitSubdir.map(s => s & "/" & f).get(f))
 
@@ -40,9 +40,7 @@ proc cloneRepositories(config: Config, targets: seq[BaseTarget],
 
   proc cloneNext(index: int, results: List[CloneResult], messages: List[string]):
     (List[CloneResult], List[string]) =
-    isArtix = false
-    isArch = false
-    isParabola = false
+    var trunkPath: bool = false
     update(bcount + index, bcount + targets.len)
 
     if index >= targets.len:
@@ -51,13 +49,8 @@ proc cloneRepositories(config: Config, targets: seq[BaseTarget],
       let target = targets[index]
       if target.gitRepo.isSome:
         if target.gitRepo.unsafeGet.branch.isSome:
-          if target.gitRepo.unsafeGet.branch.unsafeGet == "artixrepo":
-            isArtix = true
-        if contains(target.gitRepo.unsafeGet.url, "https://github.com/archlinux/"):
-          isArch = true
-        if target.gitRepo.unsafeGet.barename.isSome:
-          if target.gitRepo.unsafeGet.barename.unsafeGet == "parabola":
-            isParabola = true
+          if target.gitRepo.unsafeGet.branch.unsafeGet == "artixrepo" or contains(target.gitRepo.unsafeGet.url, "https://github.com/archlinux/"):
+            trunkPath = true
       let repoPath = repoPath(config.tmpRootCurrent, target.base)
       removeDirQuiet(repoPath)
 
@@ -68,7 +61,7 @@ proc cloneRepositories(config: Config, targets: seq[BaseTarget],
         if cloneCode != 0:
           cloneNext(index + 1, results, toSeq(cerror.items) ^& messages)
         else:
-          let (files, ferror) = getFilesOrClear(target.base, repoPath, none(string))
+          let (files, ferror) = getFilesOrClear(target.base, repoPath, none(string), trunkPath)
           if ferror.isSome:
             cloneNext(index + 1, results, ferror.unsafeGet ^& messages)
           else:
@@ -82,8 +75,8 @@ proc cloneRepositories(config: Config, targets: seq[BaseTarget],
         if cerror.isSome:
           cloneNext(index + 1, results, cerror.unsafeGet ^& messages)
         else:
-          var (files, ferror) = getFilesOrClear(target.base, repoPath, some(gitRepo.path))
-          if isArtix == true or isArch == true:
+          var (files, ferror) = getFilesOrClear(target.base, repoPath, some(gitRepo.path), trunkPath)
+          if trunkPath == true:
             for i in 0 ..< files.len:
               files[i] = "trunk" & files[i]
           if ferror.isSome:

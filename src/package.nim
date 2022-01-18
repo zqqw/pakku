@@ -74,7 +74,7 @@ type
 const
   packageRepos: seq[PackageRepo] = @[
     (["artix"].toHashSet,
-      ["system", "world", "galaxy", "lib32"].toHashSet,
+      ["system", "world", "galaxy", "lib32", "gremlins", "galaxy-gremlins", "lib32-gremlins"].toHashSet,
       ("https://gitea.artixlinux.org/packages", none(string), #bareName should be none
         some("artixrepo"), "")), #branch should be some, path should be none - git is in top dir but files are in trunk
     (["artix"].toHashSet,
