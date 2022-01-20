@@ -69,7 +69,7 @@ NIM_OPTIONS = \
 
 ASCIIDOC_OPTIONS = \
 	-f doc/asciidoc.conf \
-	-a manmanual='Pakku Manual' \
+	-a manmanual='Pakku_Manual' \
 	-a mansource='Pakku' \
 	-a manversion="${RVERSION}"
 
