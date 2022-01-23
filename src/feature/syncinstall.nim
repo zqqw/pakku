@@ -523,7 +523,7 @@ proc buildLoop(config: Config, pkgInfos: seq[PackageInfo], skipDeps: bool,
 proc buildFromSources(config: Config, commonArgs: seq[Argument],
   pkgInfos: seq[PackageInfo], skipDeps: bool, noconfirm: bool): (Option[BuildResult], int) =
   let base = pkgInfos[0].rpc.base
-  let repoPath = repoPath(config.tmpRootInitial, base)
+  var repoPath = repoPath(config.tmpRootInitial, base)
   let gitSubdir = pkgInfos[0].rpc.gitSubdir
   var trunkPath: bool = false
   if contains(pkgInfos[0].rpc.gitUrl, "https://github.com/archlinux/") or pkgInfos[0].rpc.gitUrl == "https://gitea.artixlinux.org/packages":
@@ -556,6 +556,8 @@ proc buildFromSources(config: Config, commonArgs: seq[Argument],
       else:
         (buildResult, code)
 
+  if trunkPath == true:
+    repoPath.add("/trunk")
   let preBuildCode = if config.preBuildCommand.isSome: (block:
       printColon(config.color, tr"Running pre-build command...")
 
