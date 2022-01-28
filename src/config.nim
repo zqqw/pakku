@@ -82,7 +82,15 @@ proc readConfigFile*(configFile: string):
                 table[currentCategory] = category
             elif currentCategory.len > 0:
               if line.match(re"(\w+)\ *=\ *(.*)", matches):
-                category[matches[0]]= matches[1]
+                if matches[0] == "IgnorePkg" or matches[0] == "HoldPkg":
+                  if category.hasKey(matches[0]):
+                    if not isEmptyOrWhitespace(matches[1]): # stop empty lines adding spaces
+                      category[matches[0]] = category[matches[0]] & " " & matches[1]
+                  else:
+                    if not isEmptyOrWhitespace(matches[1]):
+                      category[matches[0]] = matches[1]
+                else:
+                  category[matches[0]]= matches[1]
               else:
                 category[line]=""
 
