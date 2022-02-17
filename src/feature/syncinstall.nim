@@ -521,13 +521,10 @@ proc buildLoop(config: Config, pkgInfos: seq[PackageInfo], skipDeps: bool,
         (some(($confExt, targetPkgInfos & additionalPkgInfos)), 0, false)
 
 proc buildFromSources(config: Config, commonArgs: seq[Argument],
-  pkgInfos: seq[PackageInfo], skipDeps: bool, noconfirm: bool): (Option[BuildResult], int) =
+  pkgInfos: seq[PackageInfo], skipDeps: bool, noconfirm: bool, trunkPath: bool): (Option[BuildResult], int) =
   let base = pkgInfos[0].rpc.base
   var repoPath = repoPath(config.tmpRootInitial, base)
   let gitSubdir = pkgInfos[0].rpc.gitSubdir
-  var trunkPath: bool = false
-  if contains(pkgInfos[0].rpc.gitUrl, "https://github.com/archlinux/") or pkgInfos[0].rpc.gitUrl == "https://gitea.artixlinux.org/packages":
-    trunkPath = true
 
   proc loop(noextract: bool, showEditLoop: bool): (Option[BuildResult], int) =
     let res = if showEditLoop and not noconfirm:
@@ -582,10 +579,18 @@ proc buildFromSources(config: Config, commonArgs: seq[Argument],
 proc installGroupFromSources(config: Config, commonArgs: seq[Argument],
   basePackages: seq[seq[PackageInfo]], explicits: HashSet[string],
   skipDeps: bool, noconfirm: bool): (seq[(string, string)], int) =
+  var lastBase: string
+  var trunkPath: bool
+
   proc buildNext(index: int, buildResults: List[BuildResult]): (List[BuildResult], int) =
     if index < basePackages.len:
+      lastBase = basePackages[index][0].rpc.base
+      if contains(basePackages[index][0].rpc.gitUrl, "https://github.com/archlinux/") or basePackages[index][0].rpc.gitUrl == "https://gitea.artixlinux.org/packages":
+        trunkPath = true
+      else:
+        trunkPath = false
       let (buildResult, code) = buildFromSources(config, commonArgs,
-        basePackages[index], skipDeps, noconfirm)
+        basePackages[index], skipDeps, noconfirm, trunkPath)
 
       if code != 0:
         (buildResults.reversed, code)
@@ -624,6 +629,10 @@ proc installGroupFromSources(config: Config, commonArgs: seq[Argument],
       printWarning(config.color, tr"packages are saved to '$#'" % [config.tmpRootInitial])
 
   if buildCode != 0:
+    if trunkPath == true:
+      discard chmod(cstring(config.tmpRootInitial & "/" & lastBase & "/trunk/pkg"), 0o0755)
+    else:
+      discard chmod(cstring(config.tmpRootInitial & "/" & lastBase & "/pkg"), 0o0755)
     handleTmpRoot(true)
     (newSeq[(string, string)](), buildCode)
   else:
