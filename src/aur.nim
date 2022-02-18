@@ -1,7 +1,22 @@
 import
-  json, lists, options, re, sequtils, sets, strutils, sugar, tables,
-  package, utils,
-  "wrapper/curl"
+  std/[
+    json,
+    options,
+    re,
+    sequtils,
+    sets,
+    strutils,
+    sugar,
+    tables,
+    terminal,
+    strscans,
+    htmlparser,
+    xmltree,
+    wordwrap
+  ],
+  ./package,
+  ./utils,
+  ./wrapper/curl
 
 type
   AurComment* = tuple[
@@ -167,6 +182,60 @@ proc findAurPackages*(query: seq[string], repo: string, useTimeout: bool):
       except CurlError:
         (@[], some(getCurrentException().msg))
 
+proc formatHtml(content: XmlNode): string =
+  ## Transforms a HTML tree into a pleasant looking string to be printed
+  ## on the terminal
+  ($content).multiReplace(
+    # force line break
+      ("<br />", "\n"),
+    # paragraphs look like 2 line breaks
+      ("<p>", "\n\n"),
+      ("</p>", "\n\n"),
+    # replace mnemonics
+      ("&lt;", "<"),
+      ("&gt;", ">"),
+      ("&quot;", "\""),
+      ("&amp;", "&"),
+      ("&apos;", "'"),
+    )
+    # remove tags
+    .replace(re"<.*?>", "")
+    # multiple spaces become 1 space
+    .replace(re"\ {2,}", " ")
+    # strip and wrap lines
+    .strip
+    .split("\n")
+    .map(s => s.strip.wrapWords(maxLineWidth = terminalWidth()))
+    .foldl(a & "\n" & b)
+    .strip
+    # don't allow more than 2 line breaks
+    .replace(re"\n{2,}", "\n\n")
+
+proc parseComments(content: XmlNode): seq[AurComment] =
+  ## Scraps the `content` tree to find comments. This assumes two things:
+  ##
+  ## * `h4` headers contain a comment author and date with the format
+  ##   "<author> commented on <date>"
+  ## * The content of a comment is inside a `div` with a class attribute
+  ##   containing "article-content"
+  ##
+  ## If any of this two suppositions is no longer valid, the parsing won't work.
+  var meta = newSeq[(string, string)]()
+
+  for a in content.findAll "h4":
+    var name, date: string
+    if a.innerText.scanf("$* commented on $*", name, date):
+      date = date.replace(re"\s{2,}", " ")
+      meta.add (strip name, strip date)
+
+  var data = newSeq[string]()
+  for a in content.findAll "div":
+    if "article-content" in a.attr("class"):
+      data.add(formatHtml a)
+
+  for (m, d) in zip(meta, data):
+    result.add (m[0], m[1], d)
+
 proc downloadAurComments*(base: string): (seq[AurComment], Option[string]) =
   let (content, error) = withAur():
     try:
@@ -179,40 +248,8 @@ proc downloadAurComments*(base: string): (seq[AurComment], Option[string]) =
   if error.isSome:
     (@[], error)
   else:
-    let commentRe = re("<h4\\ id=\"comment-\\d+\">\\n\\s+(.*)?\\ commented\\ on\\ " &
-      "(.*)\\n(?:.*\\n)*?\\s+</h4>\\n\\t\\t<div\\ id=\"comment-\\d+-content\"\\ " &
-      "class=\"article-content\">((?:\\n.*)*?)\\n\\t\\t</div>")
+    let
+      tree = parseHtml(content)
+      comments = parseComments(tree)
 
-    proc transformComment(comment: string): string =
-      comment
-        # line breaks can leave a space
-        .replace("\n", " ")
-        # force line break
-        .replace("<br />", "\n")
-        # paragraphs look like 2 line breaks
-        .replace("<p>", "\n\n")
-        .replace("</p>", "\n\n")
-        # remove tags
-        .replace(re"<.*?>", "")
-        # multiple spaces become 1 spage
-        .replace(re"\ {2,}", " ")
-        # strip lines
-        .strip.split("\n").map(s => s.strip).foldl(a & "\n" & b).strip
-        # don't allow more than 2 line breaks
-        .replace(re"\n{2,}", "\n\n")
-        # replace mnemonics
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&amp;", "&")
-
-    proc findAllMatches(start: int, found: List[AurComment]): List[AurComment] =
-      var matches: array[3, string]
-      let index = content.find(commentRe, matches, start)
-      if index >= 0:
-        findAllMatches(index + 1, (matches[0].strip, matches[1].strip,
-          transformComment(matches[2])) ^& found)
-      else:
-        found
-
-    (toSeq(findAllMatches(0, nil).reversed.items), none(string))
+    (comments, none(string))
