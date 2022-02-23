@@ -1,5 +1,5 @@
 import
-  macros, options, posix, sequtils, strutils, sugar, times, unicode, terminal,
+  std/[macros, options, posix, sequtils, strutils, sugar, times, unicode, terminal],
   utils
 
 type
@@ -19,7 +19,8 @@ type
   CommentFormat* = tuple[
     author: string,
     date: string,
-    text: string
+    text: string,
+    pinned: bool
   ]
 
   Color {.pure.} = enum
@@ -226,12 +227,19 @@ proc printComments*(color: bool, maintainer: Option[string],
   comments: seq[CommentFormat]) =
   echo()
   for comment in comments:
-    let badge = if maintainer == some(comment.author):
+    var badge = ""
+    if maintainer == some(comment.author):
+      badge.add:
         ^Color.cyan & "[maintainer]" & ^Color.normal & " "
-      else:
-        ""
-    echo(^Color.blue & comment.author & ^Color.normal & " " & badge &
-      ^Color.bold & comment.date & ^Color.normal)
+
+    if comment.pinned:
+      badge.add:
+        ^Color.magenta & "[pinned]" & ^Color.normal & " "
+
+    echo(
+      ^Color.blue & comment.author & ^Color.normal & " " & badge &
+      ^Color.bold & comment.date & ^Color.normal
+    )
     echo(comment.text.replace("\n\n", "\n"))
     echo()
 

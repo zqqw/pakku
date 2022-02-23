@@ -19,10 +19,16 @@ import
   ./wrapper/curl
 
 type
-  AurComment* = tuple[
+  CommentContent = tuple[
     author: string,
     date: string,
     text: string
+  ]
+  AurComment* = tuple[
+    author: string,
+    date: string,
+    text: string,
+    pinned: bool
   ]
 
 const
@@ -211,7 +217,7 @@ proc formatHtml(content: XmlNode): string =
     # don't allow more than 2 line breaks
     .replace(re"\n{2,}", "\n\n")
 
-proc parseComments(content: XmlNode): seq[AurComment] =
+proc parseCommentsContent(content: XmlNode): seq[CommentContent] =
   ## Scraps the `content` tree to find comments. This assumes two things:
   ##
   ## * `h4` headers contain a comment author and date with the format
@@ -236,6 +242,15 @@ proc parseComments(content: XmlNode): seq[AurComment] =
   for (m, d) in zip(meta, data):
     result.add (m[0], m[1], d)
 
+proc parseComments(content: XmlNode): seq[AurComment] =
+  for a in content.findAll("div"):
+    if "package-comments" in a.attr("class"):
+      let
+        commentContent = parseCommentsContent(a)
+        pinned = "Pinned Comments" in a.innerText
+      for c in commentContent:
+        result.add (c.author, c.date, c.text, pinned)
+
 proc downloadAurComments*(base: string): (seq[AurComment], Option[string]) =
   let (content, error) = withAur():
     try:
@@ -250,6 +265,6 @@ proc downloadAurComments*(base: string): (seq[AurComment], Option[string]) =
   else:
     let
       tree = parseHtml(content)
-      comments = parseComments(tree)
+      comments = tree.parseComments()
 
     (comments, none(string))
