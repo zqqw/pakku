@@ -65,6 +65,11 @@ Options
 	This command will be executed in package directory before building,
 	allowing you to modify PKGBUILD or perform other necessary actions.
 
+*PreferredSudoCommand =* command::
+	This is the command that will be used to escalate priviliges. If the option is
+	not set or the command is not found on the system, pakku will try to guess the
+	command between sudo, doas and su.
+
 See Also
 --------
 linkman:pacman.conf[5], linkman:pakku[8]
