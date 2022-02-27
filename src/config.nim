@@ -179,9 +179,7 @@ proc obtainConfig*(config: PacmanConfig): Config =
       .filter(o => some($o) == options.opt("PreserveBuilt"))
       .optLast.get(PreserveBuilt.disabled)
     preBuildCommand = options.opt("PreBuildCommand")
-    sudoCommand = options.opt("SudoCommand")
-      .map(it => it.splitWhitespace())
-      .get(defaultSudoPrefix)
+    sudoCommand = options.opt("PreferredSudoCommand").getSudoPrefix()
 
   if config.common.dbs.find(aurRepo) >= 0:
     raise commandError(tr"repo '$#' can not be used as fake AUR repository" % [aurRepo],

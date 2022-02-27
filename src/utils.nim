@@ -126,9 +126,6 @@ proc execResult*(args: varargs[string]): int =
   perror()
   deallocCStringArray(cexec)
 
-  if code != 1:
-    stderr.writeLine("Error while executing: " & args.join(" "))
-
   code
 
 let
@@ -348,7 +345,21 @@ proc checkExec(file: string): bool =
   var statv: Stat
   stat(file, statv) == 0 and (statv.st_mode.cint and S_IXUSR) == S_IXUSR
 
-let defaultSudoPrefix*: seq[string] =
+proc getSudoPrefix*(preferred: Option[string]): seq[string] =
+  ## Get the prefix to be used for escalated priviliges. The search order is
+  ##
+  ## 1. Preferred
+  ## 2. Sudo
+  ## 3. Doas
+  ## 4. Su
+  ##
+  ## The first one to be found on the system will be used. If no command is
+  ## present, the prefix will be empty.
+
+  if preferred.isSome:
+    if checkExec(preferred.get()):
+      return @[preferred.get()]
+
   if checkExec(sudoCmd):
     @[sudoCmd]
   elif checkExec(doasCmd):
