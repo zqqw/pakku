@@ -186,6 +186,8 @@ const
 
   allConflictingOptions = syncConflictingOptions
 
+  noPrefix* = none seq[string]
+
 proc getOperation*(args: seq[Argument]): OperationType =
   let matchedOps = args
     .map(arg => operations
@@ -306,18 +308,23 @@ proc pacmanParams*(color: bool, args: varargs[Argument]): seq[string] =
       for x in y.collectArg:
         x
 
-proc pacmanExecInternal(root: bool, params: varargs[string]): int =
-  let exec = if root: sudoPrefix & pacmanCmd & @params else: pacmanCmd & @params
-  execResult(exec)
+proc pacmanExecInternal(prefix: Option[seq[string]], params: varargs[string]): int =
+  var cmd = newSeq[string]()
+  if prefix.isSome:
+    cmd.add prefix.get()
+  cmd.add pacmanCmd
+  execResult(cmd & @params)
 
-proc pacmanExec*(root: bool, color: bool, args: varargs[Argument]): int =
-  let useRoot = root and getuid() != 0
+proc pacmanExec*(prefix: Option[seq[string]], color: bool, args: varargs[Argument]): int =
   let params = pacmanParams(color, args)
-  pacmanExecInternal(useRoot, params)
+  if prefix.isSome() and getuid() != 0:
+    pacmanExecInternal(prefix, params)
+  else:
+    pacmanExecInternal(noPrefix, params)
 
-proc pacmanRun*(root: bool, color: bool, args: varargs[Argument]): int =
+proc pacmanRun*(prefix: Option[seq[string]], color: bool, args: varargs[Argument]): int =
   let argsSeq = @args
-  forkWait(() => pacmanExec(root, color, argsSeq))
+  forkWait(() => pacmanExec(prefix, color, argsSeq))
 
 proc pacmanValidateAndThrow(args: varargs[tuple[arg: Argument, pass: bool]]): void =
   let argsSeq = @args
@@ -335,7 +342,7 @@ proc pacmanValidateAndThrow(args: varargs[tuple[arg: Argument, pass: bool]]): vo
          for x in y.arg.collectArg:
            tmp.add(x)
       tmp
-  let code = forkWait(() => pacmanExecInternal(false, "-T" & collectedArgs))
+  let code = forkWait(() => pacmanExecInternal(noPrefix, "-T" & collectedArgs))
   if code != 0:
     raise haltError(code)
 

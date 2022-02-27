@@ -679,7 +679,7 @@ proc installGroupFromSources(config: Config, commonArgs: seq[Argument],
       let pacmanDatabaseParams = pacmanCmd & pacmanParams(config.color,
         commonArgs.keepOnlyOptions(commonOptions) & ("D", none(string), ArgumentType.short))
 
-      let installParams = sudoPrefix & (pkgLibDir & "/install") &
+      let installParams = config.sudoCommand & (pkgLibDir & "/install") &
         cacheDir & $cacheUser & $cacheGroup &
         $pacmanUpgradeParams.len & pacmanUpgradeParams &
         $pacmanDatabaseParams.len & pacmanDatabaseParams &
@@ -895,7 +895,7 @@ proc removeBuildDependencies(config: Config, commonArgs: seq[Argument],
 
     let code = if unrequired.len > 0: (block:
         printColon(config.color, tr"Removing build dependencies...")
-        pacmanRun(true, config.color, removeArgs &
+        pacmanRun(some config.sudoCommand, config.color, removeArgs &
           ("R", none(string), ArgumentType.short) &
           toSeq(unrequired.items).map(t => (t, none(string), ArgumentType.target))))
       else:
@@ -903,7 +903,7 @@ proc removeBuildDependencies(config: Config, commonArgs: seq[Argument],
 
     if code == 0 and unrequiredOptional.len > 0:
       printColon(config.color, tr"Removing optional build dependencies...")
-      pacmanRun(true, config.color, removeArgs &
+      pacmanRun(some config.sudoCommand, config.color, removeArgs &
         ("R", none(string), ArgumentType.short) &
         toSeq(unrequiredOptional.items).map(t => (t, none(string), ArgumentType.target)))
     else:
@@ -1239,7 +1239,7 @@ proc handleInstall(args: seq[Argument], config: Config, syncTargets: seq[SyncPac
   # check for sysupgrade instead of upgradeCount since upgrade could be done before
   # and then removed from the list of arguments
   let (directCode, directSome) = if workDirectPacmanTargets.len > 0 or args.check(%%%"sysupgrade"):
-      (pacmanRun(true, config.color, args.filter(arg => not arg.isTarget) &
+      (pacmanRun(some config.sudoCommand, config.color, args.filter(arg => not arg.isTarget) &
         workDirectPacmanTargets.map(t => (t, none(string), ArgumentType.target))), true)
     else:
       (0, false)
@@ -1293,7 +1293,7 @@ proc handleInstall(args: seq[Argument], config: Config, syncTargets: seq[SyncPac
         let additionalCode = if additionalPacmanTargets.len > 0: (block:
             printColon(config.color, tr"Installing build dependencies...")
 
-            pacmanRun(true, config.color, commonArgs &
+            pacmanRun(some config.sudoCommand, config.color, commonArgs &
               ("S", none(string), ArgumentType.short) &
               ("needed", none(string), ArgumentType.long) &
               ("asdeps", none(string), ArgumentType.long) &
@@ -1397,7 +1397,7 @@ proc handlePrint(args: seq[Argument], config: Config, syncTargets: seq[SyncPacka
         for t in callPacmanTargets:
           callArguments &= (t, none(string), ArgumentType.target)
 
-        let code = pacmanRun(false, config.color,
+        let code = pacmanRun(noPrefix, config.color,
           args.filter(arg => not arg.isTarget) & callArguments)
 
         if resolveSuccess:
@@ -1464,9 +1464,9 @@ proc handleSyncInstall*(args: seq[Argument], config: Config): int =
   let wrapUpgrade = targets.len == 0
 
   let (refreshUpgradeCode, callArgs) = if wrapUpgrade and printFormat.isNone:
-      checkAndRefreshUpgrade(config.color, args)
+      checkAndRefreshUpgrade(config.sudoCommand, config.color, args)
     else:
-      checkAndRefresh(config.color, args)
+      checkAndRefresh(config.sudoCommand, config.color, args)
 
   if refreshUpgradeCode != 0:
     refreshUpgradeCode

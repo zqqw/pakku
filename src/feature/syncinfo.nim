@@ -88,20 +88,20 @@ proc handleTarget(config: Config, padding: int, args: seq[Argument],
       0
     elif full.sync.target.reference.constraint.isSome:
       # pacman doesn't support constraints for --info queries
-      pacmanRun(false, config.color, args & full.sync.foundInfos.map(i =>
+      pacmanRun(noPrefix, config.color, args & full.sync.foundInfos.map(i =>
         (i.repo & "/" & full.sync.target.reference.name, none(string), ArgumentType.target)))
     else:
-      pacmanRun(false, config.color, args &
+      pacmanRun(noPrefix, config.color, args &
         ($full.sync.target, none(string), ArgumentType.target))
   else:
     if full.sync.target.repo == some(config.aurRepo):
       printError(config.color, trp("package '%s' was not found\n") % [$full.sync.target])
       1
     else:
-      pacmanRun(false, config.color, args & ($full.sync.target, none(string), ArgumentType.target))
+      pacmanRun(noPrefix, config.color, args & ($full.sync.target, none(string), ArgumentType.target))
 
 proc handleSyncInfo*(args: seq[Argument], config: Config): int =
-  let (refreshCode, callArgs) = checkAndRefresh(config.color, args)
+  let (refreshCode, callArgs) = checkAndRefresh(config.sudoCommand, config.color, args)
   if refreshCode != 0:
     refreshCode
   else:
@@ -122,9 +122,9 @@ proc handleSyncInfo*(args: seq[Argument], config: Config): int =
       f.sync.target.repo == some(config.aurRepo) or
       f.sync.target.reference.constraint.isSome).len == 0:
       if code == 0:
-        pacmanExec(false, config.color, callArgs)
+        pacmanExec(noPrefix, config.color, callArgs)
       else:
-        discard pacmanRun(false, config.color, callArgs)
+        discard pacmanRun(noPrefix, config.color, callArgs)
         code
     else:
       let finalArgs = callArgs.filter(arg => not arg.isTarget)

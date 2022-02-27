@@ -4,7 +4,7 @@ import
   "../wrapper/alpm"
 
 proc handleSyncClean*(args: seq[Argument], config: Config): int =
-  let code = pacmanRun(true, config.color, args)
+  let code = pacmanRun(some config.sudoCommand, config.color, args)
   if code != 0:
     code
   else:

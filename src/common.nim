@@ -48,12 +48,13 @@ var isArtix*: bool
 var isArch*: bool
 var isParabola*: bool
 
-proc checkAndRefreshUpgradeInternal(color: bool, upgrade: bool, args: seq[Argument]):
-  tuple[code: int, args: seq[Argument]] =
+proc checkAndRefreshUpgradeInternal(
+  sudoPrefix: seq[string], color: bool, upgrade: bool, args: seq[Argument]
+  ): tuple[code: int, args: seq[Argument]] =
   let refreshCount = args.count(%%%"refresh")
   let upgradeCount = if upgrade: args.count(%%%"sysupgrade") else: 0
   if refreshCount > 0 or upgradeCount > 0:
-    let code = pacmanRun(true, color, args
+    let code = pacmanRun(some sudoPrefix, color, args
       .keepOnlyOptions(commonOptions, transactionOptions, upgradeOptions) &
       ("S", none(string), ArgumentType.short) &
       ("y", none(string), ArgumentType.short).repeat(refreshCount) &
@@ -66,13 +67,13 @@ proc checkAndRefreshUpgradeInternal(color: bool, upgrade: bool, args: seq[Argume
   else:
     (0, args)
 
-template checkAndRefreshUpgrade*(color: bool, args: seq[Argument]):
+template checkAndRefreshUpgrade*(sudoPrefix: seq[string], color: bool, args: seq[Argument]):
   tuple[code: int, args: seq[Argument]] =
-  checkAndRefreshUpgradeInternal(color, true, args)
+  checkAndRefreshUpgradeInternal(sudoPrefix, color, true, args)
 
-template checkAndRefresh*(color: bool, args: seq[Argument]):
+template checkAndRefresh*(sudoPrefix: seq[string], color: bool, args: seq[Argument]):
   tuple[code: int, args: seq[Argument]] =
-  checkAndRefreshUpgradeInternal(color, false, args)
+  checkAndRefreshUpgradeInternal(sudoPrefix, color, false, args)
 
 proc noconfirm*(args: seq[Argument]): bool =
   args

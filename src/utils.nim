@@ -35,6 +35,7 @@ const
   bashCmd* = "/bin/bash"
   suCmd* = "/usr/bin/su"
   sudoCmd* = "/usr/bin/sudo"
+  doasCmd* = "/usr/bin/doas"
   gitCmd* = "/usr/bin/git"
   gpgCmd* = "/usr/bin/gpg"
   gpgConfCmd* = "/usr/bin/gpgconf"
@@ -124,6 +125,10 @@ proc execResult*(args: varargs[string]): int =
   let code = execvp(cexec[0], cexec)
   perror()
   deallocCStringArray(cexec)
+
+  if code != 1:
+    stderr.writeLine("Error while executing: " & args.join(" "))
+
   code
 
 let
@@ -343,8 +348,11 @@ proc checkExec(file: string): bool =
   var statv: Stat
   stat(file, statv) == 0 and (statv.st_mode.cint and S_IXUSR) == S_IXUSR
 
-let sudoPrefix*: seq[string] = if checkExec(sudoCmd):
+let defaultSudoPrefix*: seq[string] =
+  if checkExec(sudoCmd):
     @[sudoCmd]
+  elif checkExec(doasCmd):
+    @[doasCmd]
   elif checkExec(suCmd):
     @[suCmd, "root", "-c", "exec \"$@\"", "--", "sh"]
   else:

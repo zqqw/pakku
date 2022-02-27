@@ -161,7 +161,7 @@ proc cloneAndCopy(config: Config, quiet: bool, fullTargets: seq[FullPackageTarge
     0
 
 proc handleSyncSource*(args: seq[Argument], config: Config): int =
-  let (refreshCode, _) = checkAndRefresh(config.color, args)
+  let (refreshCode, _) = checkAndRefresh(config.sudoCommand, config.color, args)
   if refreshCode != 0:
     refreshCode
   else:
