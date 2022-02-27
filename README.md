@@ -50,6 +50,13 @@ $ makepkg -si
 For more advanced build options check the
 [wiki](https://github.com/zqqw/pakku/wiki/Building-and-modifying-pakku)!
 
+## Some tips
+
+- Pakku has color! To enable it, just enable
+[color for Pacman](https://wiki.archlinux.org/title/Color_output_in_console#pacman).
+- Don't forget to read the `pakku(8)` and `pakku.conf(5)` man pages to read the
+full list of features!
+
 ## Distribution compatibility
 
 Pakku should work with Arch based distros although some minor aspects may not,
