@@ -385,8 +385,6 @@ proc getSudoPrefix*(preferred: Option[string]): seq[string] =
     result.add suCmd
     result.add suArgs
 
-  echo "using", result
-
 var intSigact: SigAction
 intSigact.sa_handler = SIG_DFL
 discard sigaction(SIGINT, intSigact)
