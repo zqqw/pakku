@@ -1,5 +1,17 @@
 import
-  hashes, options, os, posix, sequtils, strutils, sugar, tables, osproc, streams, strtabs
+  std/[
+    hashes,
+    options,
+    os,
+    posix,
+    sequtils,
+    strutils,
+    sugar,
+    tables,
+    osproc,
+    streams,
+    strtabs
+  ]
 
 type
   HaltError* = object of CatchableError
@@ -356,18 +368,24 @@ proc getSudoPrefix*(preferred: Option[string]): seq[string] =
   ## The first one to be found on the system will be used. If no command is
   ## present, the prefix will be empty.
 
+  const suArgs = @["root", "-c", "exec \"$@\"", "--", "sh"]
   if preferred.isSome:
-    if checkExec(preferred.get()):
-      return @[preferred.get()]
+    let p = preferred.get().split(" ")
+    if p.len > 0 and checkExec(p[0]):
+      result = p
+      if result[0] == suCmd:
+        result.add suArgs
+      return
 
   if checkExec(sudoCmd):
-    @[sudoCmd]
+    result.add sudoCmd
   elif checkExec(doasCmd):
-    @[doasCmd]
+    result.add doasCmd
   elif checkExec(suCmd):
-    @[suCmd, "root", "-c", "exec \"$@\"", "--", "sh"]
-  else:
-    @[]
+    result.add suCmd
+    result.add suArgs
+
+  echo "using", result
 
 var intSigact: SigAction
 intSigact.sa_handler = SIG_DFL
