@@ -1,5 +1,17 @@
 import
-  hashes, options, os, posix, sequtils, strutils, sugar, tables, osproc, streams, strtabs
+  std/[
+    hashes,
+    options,
+    os,
+    posix,
+    sequtils,
+    strutils,
+    sugar,
+    tables,
+    osproc,
+    streams,
+    strtabs
+  ]
 
 type
   HaltError* = object of CatchableError
@@ -35,6 +47,7 @@ const
   bashCmd* = "/bin/bash"
   suCmd* = "/usr/bin/su"
   sudoCmd* = "/usr/bin/sudo"
+  doasCmd* = "/usr/bin/doas"
   gitCmd* = "/usr/bin/git"
   gpgCmd* = "/usr/bin/gpg"
   gpgConfCmd* = "/usr/bin/gpgconf"
@@ -124,6 +137,7 @@ proc execResult*(args: varargs[string]): int =
   let code = execvp(cexec[0], cexec)
   perror()
   deallocCStringArray(cexec)
+
   code
 
 let
@@ -343,12 +357,35 @@ proc checkExec(file: string): bool =
   var statv: Stat
   stat(file, statv) == 0 and (statv.st_mode.cint and S_IXUSR) == S_IXUSR
 
-let sudoPrefix*: seq[string] = if checkExec(sudoCmd):
-    @[sudoCmd]
+proc getSudoPrefix*(preferred: Option[string]): seq[string] =
+  ## Get the prefix to be used for escalated priviliges. The search order is
+  ##
+  ## 1. Preferred
+  ## 2. Sudo
+  ## 3. Doas
+  ## 4. Su
+  ##
+  ## The first one to be found on the system will be used. If no command is
+  ## present, the prefix will be empty.
+
+  const suArgs = @["root", "-c", "exec \"$@\"", "--", "sh"]
+  if preferred.isSome:
+    let p = preferred.get().split(" ")
+    if p.len > 0 and checkExec(p[0]):
+      result = p
+      if result[0] == suCmd:
+        result.add suArgs
+      return
+
+  if checkExec(sudoCmd):
+    result.add sudoCmd
+  elif checkExec(doasCmd):
+    result.add doasCmd
   elif checkExec(suCmd):
-    @[suCmd, "root", "-c", "exec \"$@\"", "--", "sh"]
-  else:
-    @[]
+    result.add suCmd
+    result.add suArgs
+
+  echo "using", result
 
 var intSigact: SigAction
 intSigact.sa_handler = SIG_DFL

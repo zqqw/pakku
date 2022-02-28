@@ -34,7 +34,7 @@ proc handleQueryOrphans*(args: seq[Argument], config: Config): int =
       not arg.matchOption(%%%"unrequired") and
       not arg.matchOption(%%%"deps")) &
       results.map(r => (r, none(string), ArgumentType.target))
-    pacmanExec(false, config.color, newArgs)
+    pacmanExec(noPrefix, config.color, newArgs)
   elif targets.len == 0:
     0
   else:

@@ -1,5 +1,5 @@
 import
-  options, posix, re, sequtils, sets, strutils, sugar, tables,
+  std/[options, posix, re, sequtils, sets, strutils, sugar, tables],
   utils
 
 type
@@ -56,7 +56,8 @@ type
     sudoExec: bool,
     viewNoDefault: bool,
     preserveBuilt: PreserveBuilt,
-    preBuildCommand: Option[string]
+    preBuildCommand: Option[string],
+    sudoCommand: seq[string]
   ]
 
 proc readConfigFile*(configFile: string):
@@ -160,23 +161,25 @@ proc obtainConfig*(config: PacmanConfig): Config =
   proc obtainTmpDir(user: User): string =
     options.opt("TmpDir").get("/tmp/pakku-${USER}").handleDirPattern(user)
 
-  let initialOrCurrentUser = initialUser.get(currentUser)
-  let userCacheInitial = obtainUserCacheDir(initialOrCurrentUser)
-  let userCacheCurrent = obtainUserCacheDir(currentUser)
-  let tmpRootInitial = obtainTmpDir(initialOrCurrentUser)
-  let tmpRootCurrent = obtainTmpDir(currentUser)
-  let aurRepo = options.opt("AurRepo").get("aur")
-  let aurComments = options.hasKey("AurComments")
-  let checkIgnored = options.hasKey("CheckIgnored")
-  let ignoreArch = options.hasKey("IgnoreArch")
-  let printAurNotFound = options.hasKey("PrintAurNotFound")
-  let printLocalIsNewer = options.hasKey("PrintLocalIsNewer")
-  let sudoExec = options.hasKey("SudoExec")
-  let viewNoDefault = options.hasKey("ViewNoDefault")
-  let preserveBuilt = toSeq(enumerate[PreserveBuilt]())
-    .filter(o => some($o) == options.opt("PreserveBuilt"))
-    .optLast.get(PreserveBuilt.disabled)
-  let preBuildCommand = options.opt("PreBuildCommand")
+  let
+    initialOrCurrentUser = initialUser.get(currentUser)
+    userCacheInitial = obtainUserCacheDir(initialOrCurrentUser)
+    userCacheCurrent = obtainUserCacheDir(currentUser)
+    tmpRootInitial = obtainTmpDir(initialOrCurrentUser)
+    tmpRootCurrent = obtainTmpDir(currentUser)
+    aurRepo = options.opt("AurRepo").get("aur")
+    aurComments = options.hasKey("AurComments")
+    checkIgnored = options.hasKey("CheckIgnored")
+    ignoreArch = options.hasKey("IgnoreArch")
+    printAurNotFound = options.hasKey("PrintAurNotFound")
+    printLocalIsNewer = options.hasKey("PrintLocalIsNewer")
+    sudoExec = options.hasKey("SudoExec")
+    viewNoDefault = options.hasKey("ViewNoDefault")
+    preserveBuilt = toSeq(enumerate[PreserveBuilt]())
+      .filter(o => some($o) == options.opt("PreserveBuilt"))
+      .optLast.get(PreserveBuilt.disabled)
+    preBuildCommand = options.opt("PreBuildCommand")
+    sudoCommand = options.opt("PreferredSudoCommand").getSudoPrefix()
 
   if config.common.dbs.find(aurRepo) >= 0:
     raise commandError(tr"repo '$#' can not be used as fake AUR repository" % [aurRepo],
@@ -192,7 +195,7 @@ proc obtainConfig*(config: PacmanConfig): Config =
     config.common.ignorePkgs, config.common.ignoreGroups),
     root, db, cache, userCacheInitial, userCacheCurrent, tmpRootInitial, tmpRootCurrent,
     color, aurRepo, aurComments, checkIgnored, ignoreArch, printAurNotFound, printLocalIsNewer,
-    sudoExec, viewNoDefault, preserveBuilt, preBuildCommand)
+    sudoExec, viewNoDefault, preserveBuilt, preBuildCommand, sudoCommand)
 
 template withAlpmConfig*(config: Config, passDbs: bool,
   handle: untyped, alpmDbs: untyped, errors: untyped, body: untyped): untyped =

@@ -10,25 +10,32 @@ import
   "feature/syncsearch",
   "feature/syncsource"
 
-proc execSudo*(args: seq[Argument]): int =
+proc execSudo*(sudoPrefix: seq[string], args: seq[Argument]): int =
   execResult(sudoPrefix & getAppFilename() & (block:collect(newSeq):
     for y in args:
       for x in y.collectArg:
         x
     ))
-proc passValidation(args: seq[Argument], config: Config,
-  nonRootArgs: openArray[OptionPair], rootArgs: openArray[OptionPair],
-  opts: varargs[seq[CommandOption]]): int =
+
+proc passValidation(
+  args: seq[Argument], config: Config, nonRootArgs: openArray[OptionPair],
+  rootArgs: openArray[OptionPair], opts: varargs[seq[CommandOption]]
+  ): int =
+
   let checkArgs = args.filterOptions(true, false, true, opts)
 
   if checkArgs.len == 0:
-    let needRoot = (nonRootArgs.len == 0 and args.check(rootArgs)) or
-      (nonRootArgs.len > 0 and (not args.check(nonRootArgs) or args.check(rootArgs)))
-    return pacmanExec(needRoot, config.color, args.filterExtensions(true, true, opts))
+    var sudoPrefix = noPrefix
+    if (nonRootArgs.len == 0 and args.check(rootArgs)) or
+    (nonRootArgs.len > 0 and (not args.check(nonRootArgs) or
+                              args.check(rootArgs))):
+      sudoPrefix = some config.sudoCommand
+
+    return pacmanExec(sudoPrefix, config.color, args.filterExtensions(true, true, opts))
   else:
     let extensions = args.filterExtensions(false, false, opts)
     if extensions.len == 0:
-      return pacmanExec(false, config.color, args)
+      return pacmanExec(noPrefix, config.color, args)
     else:
       let arg = extensions[0]
       if arg.isShort:
@@ -99,7 +106,7 @@ proc handleSync(args: seq[Argument], config: Config): int =
     let printMode = args.check(%%%"print") or args.check(%%%"print-format")
 
     if currentUser.uid != 0 and config.sudoExec and not printMode:
-      execSudo(args)
+      execSudo(config.sudoCommand, args)
     else:
       let isNonDefaultRoot = not config.common.defaultRoot
       let isRootNoDrop = currentUser.uid == 0 and not canDropPrivileges()
@@ -200,7 +207,7 @@ proc handleVersion(): int =
   echo()
   echo(' '.repeat(23), "Pakku v", version)
   echo(' '.repeat(23), "Copyright (C) ", copyright)
-  pacmanExec(false, false, ("V", none(string), ArgumentType.short))
+  pacmanExec(noPrefix, false, ("V", none(string), ArgumentType.short))
 
 discard setlocale(LC_ALL, "")
 
@@ -221,9 +228,17 @@ template withErrorHandler(propColor: Option[bool], T: typedesc, body: untyped):
 
 let init = withErrorHandler(none(bool),
   tuple[parsedArgs: seq[Argument], config: Config]):
-  let parsedArgs = splitArgs(commandLineParams(), optionsWithParameter,
-    (operations.map(o => o.pair.long) & allOptions.map(o => o.pair.long)).deduplicate)
-  let operation = getOperation(parsedArgs)
+
+  let
+    parsedArgs = splitArgs(
+      commandLineParams(), optionsWithParameter, 
+      (operations.map(o => o.pair.long) & allOptions.map(o => o.pair.long))
+      .deduplicate)
+
+    operation = getOperation(parsedArgs)
+    pacmanConfig = obtainPacmanConfig(parsedArgs)
+    config = obtainConfig(pacmanConfig)
+
   if operation != OperationType.invalid and
     parsedArgs.check(%%%"help"):
     handleHelp(operation)
@@ -233,11 +248,9 @@ let init = withErrorHandler(none(bool),
     let code = handleVersion()
     raise haltError(code)
   elif parsedArgs.check(%%%"sysroot") and currentUser.uid != 0:
-    let code = execSudo(parsedArgs)
+    let code = execSudo(config.sudoCommand, parsedArgs)
     raise haltError(code)
   else:
-    let pacmanConfig = obtainPacmanConfig(parsedArgs)
-    let config = obtainConfig(pacmanConfig)
     (parsedArgs, config)
 
 proc run(parsedArgs: seq[Argument], config: Config):

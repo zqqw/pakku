@@ -5,7 +5,7 @@ import
   "../wrapper/alpm"
 
 proc handleSyncSearch*(args: seq[Argument], config: Config): int =
-  let (refreshCode, callArgs) = checkAndRefresh(config.color, args)
+  let (refreshCode, callArgs) = checkAndRefresh(config.sudoCommand, config.color, args)
   if refreshCode != 0:
     refreshCode
   else:
@@ -39,12 +39,12 @@ proc handleSyncSearch*(args: seq[Argument], config: Config): int =
     var code = min(aerrors.len, 1)
     if pkgs.len == 0:
       if code == 0:
-        pacmanExec(false, config.color, callArgs)
+        pacmanExec(noPrefix, config.color, callArgs)
       else:
-        discard pacmanRun(false, config.color, callArgs)
+        discard pacmanRun(noPrefix, config.color, callArgs)
         code
     else:
-      discard pacmanRun(false, config.color, callArgs)
+      discard pacmanRun(noPrefix, config.color, callArgs)
 
       for pkg in pkgs:
         if quiet:
