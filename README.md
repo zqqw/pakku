@@ -54,6 +54,8 @@ For more advanced build options check the
 
 - Pakku has color! To enable it, just enable
 [color for Pacman](https://wiki.archlinux.org/title/Color_output_in_console#pacman).
+- Pakku has out of the box support for [doas](https://wiki.archlinux.org/title/Doas)!
+  To use something other than `sudo` or `doas`, check the `PreferredSudoCommand` configuration option.
 - Don't forget to read the `pakku(8)` and `pakku.conf(5)` man pages to read the
 full list of features!
 
