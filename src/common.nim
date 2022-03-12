@@ -44,10 +44,6 @@ type
     repo: string
   ]
 
-var isArtix*: bool
-var isArch*: bool
-var isParabola*: bool
-
 proc checkAndRefreshUpgradeInternal(
   sudoPrefix: seq[string], color: bool, upgrade: bool, args: seq[Argument]
   ): tuple[code: int, args: seq[Argument]] =
@@ -321,7 +317,7 @@ template userCache(config: Config, dropPrivileges: bool): string =
 template cache*(userCache: string, cacheKind: CacheKind): string =
   userCache & "/" & $cacheKind
 
-proc createDirRecursive(dir: string, chownUser: Option[User]): bool =
+proc createDirRecursive(dir: string, chownUser: Option[User], mkTmp: bool): bool =
   let segments = dir.split("/").filter(x => not (x.len == 0 or x == "."))
 
   proc createDirIndex(index: int): bool =
@@ -330,6 +326,8 @@ proc createDirRecursive(dir: string, chownUser: Option[User]): bool =
         segments[0 .. index].join("/")
       try:
         let exists = path.existsOrCreateDir()
+        if mktmp and not exists and isEmptyOrWhitespace(firstCreatedTmpDir):
+          firstCreatedTmpDir = path & "/"
         if chownUser.isSome and (not exists or index == segments.len - 1):
           discard chown(cstring(path), (Uid) chownUser.unsafeGet.uid, (Gid) chownUser.unsafeGet.gid)
         createDirIndex(index + 1)
@@ -340,20 +338,20 @@ proc createDirRecursive(dir: string, chownUser: Option[User]): bool =
 
   createDirIndex(0)
 
-proc ensureDirOrError(dir: string, dropPrivileges: bool): Option[string] =
+proc ensureDirOrError(dir: string, dropPrivileges: bool, mkTmp: bool): Option[string] =
   let user = if dropPrivileges: some(initialUser.get(currentUser)) else: none(User)
 
-  if not createDirRecursive(dir, user):
+  if not createDirRecursive(dir, user, mkTmp):
     some(tr"failed to create directory '$#'" % [dir])
   else:
     none(string)
 
 proc ensureTmpOrError*(config: Config, dropPrivileges: bool): Option[string] =
-  ensureDirOrError(config.tmpRoot(dropPrivileges), dropPrivileges)
+  ensureDirOrError(config.tmpRoot(dropPrivileges), dropPrivileges, true)
 
 proc ensureUserCacheOrError*(config: Config, cacheKind: CacheKind,
   dropPrivileges: bool): Option[string] =
-  ensureDirOrError(config.userCache(dropPrivileges).cache(cacheKind), dropPrivileges)
+  ensureDirOrError(config.userCache(dropPrivileges).cache(cacheKind), dropPrivileges, false)
 
 proc getGitFiles*(repoPath: string, gitSubdir: Option[string],
   dropPrivileges: bool, trunkPath: bool): seq[string] =

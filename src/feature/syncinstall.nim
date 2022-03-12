@@ -278,9 +278,12 @@ proc findDependencies(config: Config, handle: ptr AlpmHandle,
   findDependencies(config, handle, dbs, satisfied, unsatisfied, @[],
     additionalPkgInfos, @[], nodepsCount, assumeInstalled, printMode, noaur)
 
-template clearPaths(paths: untyped) =
+template clearPaths(paths: untyped, tmpDir: bool = false) =
   for path in paths:
-    removeDirQuiet(path)
+    if tmpDir:
+      removeTmpDirQuiet(path)
+    else:
+      removeDirQuiet(path)
   discard rmdir(cstring(config.tmpRootInitial))
 
 proc printUnsatisfied(config: Config,
@@ -1252,6 +1255,7 @@ proc handleInstall(args: seq[Argument], config: Config, syncTargets: seq[SyncPac
       directSome or wrapUpgrade, false, upgradeCount, noconfirm, needed, noaur, build)
 
     if resolveTargetsCode != 0:
+      removeTmpDirQuiet(config.tmpRootCurrent)
       resolveTargetsCode
     else:
       let assumeInstalled = args.assumeInstalled
@@ -1268,7 +1272,7 @@ proc handleInstall(args: seq[Argument], config: Config, syncTargets: seq[SyncPac
 
       let paths = initialPaths & dependencyPaths
       if confirmAndResolveCode != 0:
-        clearPaths(paths)
+        clearPaths(paths, true)
         confirmAndResolveCode
       else:
         let explicitsNamesSet = installed.filter(i => i.explicit).map(i => i.name).toHashSet
@@ -1302,7 +1306,7 @@ proc handleInstall(args: seq[Argument], config: Config, syncTargets: seq[SyncPac
             0
 
         if additionalCode != 0:
-          clearPaths(paths)
+          clearPaths(paths, true)
           additionalCode
         else:
           if basePackages.len > 0:
@@ -1329,7 +1333,7 @@ proc handleInstall(args: seq[Argument], config: Config, syncTargets: seq[SyncPac
                 @[]
 
             if unsatisfied.len > 0:
-              clearPaths(paths)
+              clearPaths(paths, true)
               printUnsatisfied(config, satisfied, unsatisfied)
               1
             else:
@@ -1345,7 +1349,7 @@ proc handleInstall(args: seq[Argument], config: Config, syncTargets: seq[SyncPac
               let (installedAs, code, index) = installNext(0, nil, 0)
               if code != 0 and index < basePackages.len - 1:
                 printWarning(config.color, tr"installation aborted")
-              clearPaths(paths)
+              clearPaths(paths, true)
 
               let newKeepNames = keepNames.map(n => installedAs.opt(n).get(n))
               let (_, finalUnrequired, finalUnrequiredWithoutOptional, _) =
@@ -1366,7 +1370,7 @@ proc handleInstall(args: seq[Argument], config: Config, syncTargets: seq[SyncPac
             let aurTargets = fullTargets.filter(f => f.isAurTargetFull(config.aurRepo))
             if (not noaur and (aurTargets.len > 0 or upgradeCount > 0)) or build:
               echo(trp(" there is nothing to do\n"))
-            clearPaths(paths)
+            clearPaths(paths, true)
             0
 
 proc handlePrint(args: seq[Argument], config: Config, syncTargets: seq[SyncPackageTarget],

@@ -13,6 +13,8 @@ import
     strtabs
   ]
 
+var firstCreatedTmpDir*: string
+
 type
   HaltError* = object of CatchableError
     code*: int
@@ -419,6 +421,17 @@ proc toString*[T](arr: array[T, char], length: Option[int]): string =
 proc removeDirQuiet*(s: string) =
   try:
     removeDir(s)
+  except:
+    discard
+
+proc removeTmpDirQuiet*(s: string) =
+  var path: string
+  if not isEmptyOrWhitespace(firstCreatedTmpDir) and startsWith(s, firstCreatedTmpDir):
+    path = firstCreatedTmpDir
+  else:
+    path = s
+  try:
+    removeDir(path)
   except:
     discard
 

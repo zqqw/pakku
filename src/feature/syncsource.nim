@@ -152,8 +152,8 @@ proc cloneAndCopy(config: Config, quiet: bool, fullTargets: seq[FullPackageTarge
   for e in cerrors: printError(config.color, e)
 
   for result in results:
-    removeDirQuiet(result.path)
-  discard rmdir(cstring(config.tmpRootCurrent))
+    removeTmpDirQuiet(result.path)
+  removeTmpDirQuiet(config.tmpRootCurrent)
 
   if rerrors.len > 0 or cerrors != nil:
     1
