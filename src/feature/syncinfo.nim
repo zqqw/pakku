@@ -112,7 +112,7 @@ proc handleSyncInfo*(args: seq[Argument], config: Config): int =
       findSyncTargets(handle, dbs, targets, config.aurRepo, false, false, true)
 
     let (pkgInfos, _, aerrors) = getAurPackageInfos(checkAurNames,
-      config.aurRepo, config.common.arch, config.common.downloadTimeout)
+      config.aurRepo, config.common.arch, config.common.downloadTimeout, config.color)
     for e in aerrors: printError(config.color, e)
 
     let fullTargets = mapAurTargets(syncTargets, pkgInfos.map(p => p.rpc), config.aurRepo)

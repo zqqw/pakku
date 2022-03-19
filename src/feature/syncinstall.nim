@@ -213,12 +213,12 @@ proc findDependencies(config: Config, handle: ptr AlpmHandle, dbs: seq[ptr AlpmD
           let (pkgInfos, additionalPkgInfos, paths) = if printMode: (block:
               let (pkgInfos, additionalPkgInfos, aerrors) = getAurPackageInfos(aurCheck
                 .map(r => r.name), config.aurRepo, config.common.arch,
-                config.common.downloadTimeout)
+                config.common.downloadTimeout, config.color)
               for e in aerrors: printError(config.color, e)
               (pkgInfos, additionalPkgInfos, newSeq[string]()))
             else: (block:
               let (rpcInfos, aerrors) = getRpcPackageInfos(aurCheck.map(r => r.name),
-                config.aurRepo, config.common.downloadTimeout)
+                config.aurRepo, config.common.downloadTimeout, config.color)
               for e in aerrors: printError(config.color, e)
               let (pkgInfos, additionalPkgInfos, paths, cerrors) =
                 cloneAurReposWithPackageInfos(config, rpcInfos, not printMode, update, true)
@@ -1073,11 +1073,11 @@ proc obtainAurPackageInfos(config: Config, rpcInfos: seq[RpcPackageInfo],
 
   let (pkgInfos, additionalPkgInfos, paths, errors) = if printMode: (block:
       let (pkgInfos, additionalPkgInfos, aerrors) = getAurPackageInfos(fullRpcInfos
-        .map(i => i.name), config.aurRepo, config.common.arch, config.common.downloadTimeout)
+        .map(i => i.name), config.aurRepo, config.common.arch, config.common.downloadTimeout, config.color)
       (pkgInfos, additionalPkgInfos, newSeq[string](), aerrors.deduplicate))
     else: (block:
       let (rpcInfos, aerrors) = getRpcPackageInfos(fullRpcInfos.map(i => i.name),
-        config.aurRepo, config.common.downloadTimeout)
+        config.aurRepo, config.common.downloadTimeout, config.color)
       let (pkgInfos, additionalPkgInfos, paths, cerrors) =
         cloneAurReposWithPackageInfos(config, rpcInfos, not printMode, update, true)
       (pkgInfos, additionalPkgInfos, paths, (toSeq(aerrors.items) & cerrors).deduplicate))
@@ -1163,7 +1163,7 @@ proc resolveBuildTargets(config: Config, syncTargets: seq[SyncPackageTarget],
       if not printMode:
         echo(tr"checking AUR database for upgrades...")
       let (upgradeRpcInfos, rerrors) = getRpcPackageInfos(checkAurUpgradeNames,
-        config.aurRepo, config.common.downloadTimeout)
+        config.aurRepo, config.common.downloadTimeout, config.color)
       for e in rerrors: printError(config.color, e)
       upgradeRpcInfos)
     else:
@@ -1440,7 +1440,7 @@ proc resolveAurTargets(config: Config, targets: seq[PackageTarget], printMode: b
         echo(tr"checking AUR database for targets...")
 
       let (rpcInfos, rerrors) = getRpcPackageInfos(checkAurTargetNames,
-        config.aurRepo, config.common.downloadTimeout)
+        config.aurRepo, config.common.downloadTimeout, config.color)
       for e in rerrors: printError(config.color, e)
       rpcInfos)
     else:

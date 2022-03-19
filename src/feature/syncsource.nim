@@ -177,7 +177,7 @@ proc handleSyncSource*(args: seq[Argument], config: Config): int =
         findSyncTargets(handle, dbs, targets, config.aurRepo, false, false, false)
 
       let (rpcInfos, aerrors) = getRpcPackageInfos(checkAurNames,
-        config.aurRepo, config.common.downloadTimeout)
+        config.aurRepo, config.common.downloadTimeout, config.color)
       for e in aerrors: printError(config.color, e)
 
       let notFoundTargets = filterNotFoundSyncTargets(syncTargets,

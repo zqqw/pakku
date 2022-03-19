@@ -2,6 +2,8 @@ import
   std/[
     json,
     options,
+    os,
+    random,
     re,
     sequtils,
     sets,
@@ -16,7 +18,8 @@ import
   ],
   ./package,
   ./utils,
-  ./wrapper/curl
+  ./wrapper/curl,
+  ./format
 
 type
   CommentContent = tuple[
@@ -74,7 +77,7 @@ proc obtainPkgBaseSrcInfo(base: string, useTimeout: bool): (string, Option[strin
   except CurlError:
     ("", some(getCurrentException().msg))
 
-proc getRpcPackageInfos*(pkgs: seq[string], repo: string, useTimeout: bool):
+proc getRpcPackageInfosInternal(pkgs: seq[string], repo: string, useTimeout: bool):
   (seq[RpcPackageInfo], Option[string]) =
   let dpkgs = pkgs.deduplicate
   if dpkgs.len == 0:
@@ -105,14 +108,29 @@ proc getRpcPackageInfos*(pkgs: seq[string], repo: string, useTimeout: bool):
         (@[], some(getCurrentException().msg))
       except JsonParsingError:
         (@[], some(tr"failed to parse server response"))
+      except:
+        (@[], some(getCurrentException().msg))
 
-proc getAurPackageInfos*(pkgs: seq[string], repo: string, arch: string, useTimeout: bool):
+proc getRpcPackageInfos*(pkgs: seq[string], repo: string, useTimeout: bool, configColor: bool):
+  (seq[RpcPackageInfo], Option[string]) =
+  randomize()
+  var rval: (seq[RpcPackageInfo], Option[string])
+  for i in 0..2:
+    rval = getRpcPackageInfosInternal(pkgs, repo, useTimeout)
+    if isNone(rval[1]):
+      break
+    printError(configColor, rval[1].unsafeGet)
+    sleep(rand(2000..3000))
+
+  return (rval)
+
+proc getAurPackageInfos*(pkgs: seq[string], repo: string, arch: string, useTimeout: bool, configColor: bool):
   (seq[PackageInfo], seq[PackageInfo], seq[string]) =
   if pkgs.len == 0:
     (@[], @[], @[])
   else:
     withAur():
-      let (rpcInfos, error) = getRpcPackageInfos(pkgs, repo, useTimeout)
+      let (rpcInfos, error) = getRpcPackageInfos(pkgs, repo, useTimeout, configColor)
 
       if error.isSome:
         (@[], @[], @[error.unsafeGet])
