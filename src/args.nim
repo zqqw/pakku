@@ -68,7 +68,7 @@ proc splitArgs*(params: seq[string],
       return (@[(current, none(string), ArgumentType.target)], next, stdinConsumed, true)
     elif current == "--":
       return (@[], next, stdinConsumed, true)
-    elif current[0 .. 1] == "--":
+    elif current.len > 1 and current[0 .. 1] == "--":
       let valueFull = current[2 .. ^1]
       let index = valueFull.find("=")
       let keyCandidate = if index >= 0: valueFull[0 .. index - 1] else: valueFull
