@@ -76,7 +76,8 @@ proc formatPkgRating*(votes: int, popularity: float): string =
   $votes & " / " & formatFloat(popularity, format = ffDecimal, precision = 6)
 
 proc computeMaxLength*(texts: openArray[string]): int =
-  texts.map(runeLen).max
+  for text in texts:
+    result = max(result, text.runeLen)
 
 proc splitLines(text: string, lineSize: int, lines: seq[string] = @[]): seq[string] =
   let addBreaks = lineSize >= 10
