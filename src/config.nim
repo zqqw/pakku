@@ -200,4 +200,4 @@ proc obtainConfig*(config: PacmanConfig): Config =
 template withAlpmConfig*(config: Config, passDbs: bool,
   handle: untyped, alpmDbs: untyped, errors: untyped, body: untyped): untyped =
   withAlpm(cstring(config.root), config.db, if passDbs: config.common.dbs
-    else: @[], cstring(config.common.arch), handle, alpmDbs, errors, body)
+    else: newSeq[string](), cstring(config.common.arch), handle, alpmDbs, errors, body)
