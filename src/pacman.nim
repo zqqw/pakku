@@ -1,6 +1,7 @@
 import
   macros, options, posix, sequtils, sets, strutils, sugar, tables,
   args, config, utils
+when not declared(system.stdout): import std/syncio
 
 type
   OpGroup* {.pure.} = enum
@@ -438,7 +439,7 @@ proc obtainPacmanConfig*(args: seq[Argument]): PacmanConfig =
               let line = file.readLine()
               if line.len > 10 and line[0 .. 9] == "keyserver ":
                 pgpKeyserver = some(line[9 .. ^1].strip)
-          except:
+          except CatchableError:
             discard
           finally:
             file.close()

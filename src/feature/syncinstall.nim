@@ -3,6 +3,7 @@ import
   "../args", "../aur", "../config", "../common", "../format", "../lists", "../package",
     "../pacman", "../utils",
   "../wrapper/alpm"
+when not declared(system.stdout): import std/syncio
 
 type
   Installed = tuple[
@@ -444,7 +445,7 @@ proc buildLoop(config: Config, pkgInfos: seq[PackageInfo], skipDeps: bool,
       finally:
         file.close()
     true
-  except:
+  except CatchableError:
     discard unlink(cstring(workConfFile))
     false
 
@@ -625,7 +626,7 @@ proc installGroupFromSources(config: Config, commonArgs: seq[Argument],
       if clear or not (pair.file in installFiles):
         try:
           removeFile(pair.file)
-        except:
+        except CatchableError:
           discard
 
     if not clear:

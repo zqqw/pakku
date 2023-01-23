@@ -251,9 +251,12 @@ let initialUser* = try:
     else:
       none(string)
 
-  let uid = uidString.get.parseInt
-  if uid == 0 or currentUser.uid != 0: none(User) else: some(getUser(uid))
-except:
+  if uidString.isSome:
+    let uid = uidString.get.parseInt
+    if uid == 0 or currentUser.uid != 0: none(User) else: some(getUser(uid))
+  else:
+    none(User)
+except CatchableError:
   none(User)
 
 proc canDropPrivileges*(): bool =
@@ -303,7 +306,7 @@ proc execRedirect*(args: varargs[string]): int =
   argSeq.delete(0)
   try:
     p = startProcess(command = args[0], args = argSeq, env = envs, options = {poStdErrToStdOut, poUsePath})
-  except:
+  except CatchableError:
     echo "Error: " & getCurrentExceptionMsg()
     return -1
   var outp = outputStream(p)
@@ -421,7 +424,7 @@ proc toString*[T](arr: array[T, char], length: Option[int]): string =
 proc removeDirQuiet*(s: string) =
   try:
     removeDir(s)
-  except:
+  except CatchableError:
     discard
 
 proc removeTmpDirQuiet*(s: string) =
@@ -432,7 +435,7 @@ proc removeTmpDirQuiet*(s: string) =
     path = s
   try:
     removeDir(path)
-  except:
+  except CatchableError:
     discard
 
 const bashSpecialCharacters = " \t\"'`()[]{}#&|;!\\*~<>?"

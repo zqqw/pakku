@@ -2,6 +2,7 @@ import
   options, os, osproc, posix, sequtils, sets, strutils, sugar, tables,
   args, config, format, lists, package, pacman, utils,
   "wrapper/alpm"
+when not declared(system.stdout): import std/syncio
 
 type
   CacheKind* {.pure.} = enum
@@ -331,7 +332,7 @@ proc createDirRecursive(dir: string, chownUser: Option[User], mkTmp: bool): bool
         if chownUser.isSome and (not exists or index == segments.len - 1):
           discard chown(cstring(path), (Uid) chownUser.unsafeGet.uid, (Gid) chownUser.unsafeGet.gid)
         createDirIndex(index + 1)
-      except:
+      except CatchableError:
         false
     else:
       true
@@ -882,7 +883,7 @@ proc cloneAurReposWithPackageInfos*(config: Config, rpcInfos: seq[RpcPackageInfo
       else:
         let srcInfos = try:
           readFile(repoPath & "/.SRCINFO")
-        except:
+        except CatchableError:
           ""
 
         let addPkgInfos = parseSrcInfo(config.aurRepo, srcInfos, config.common.arch,

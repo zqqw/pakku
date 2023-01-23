@@ -1,6 +1,7 @@
 import
   options, os, re, sequtils, sets, strutils, sugar, tables, utils,
   "wrapper/alpm"
+when not declared(system.stdout): import std/syncio
 
 type
   ConstraintOperation* {.pure.} = enum
@@ -130,7 +131,7 @@ static:
       try:
         if m2[x2] != x1:
           raise newException(CatchableError, "")
-      except:
+      except CatchableError:
         raise newException(CatchableError, "Invalid url <> bareName links")
 
   testBareNamesAndUrls(bareNameToUrl, urlToBareName)

@@ -61,6 +61,7 @@ NIM_OPTIONS = \
 	--putenv:'PROG_LOCALSTATEDIR'="${LOCALSTATEDIR}" \
 	--putenv:'PROG_SYSCONFDIR'="${SYSCONFDIR}" \
 	-d:'${NIM_TARGET}' \
+#	-d:nimPreviewSlimSystem \
 	--opt:'${NIM_OPTIMIZE}' \
 	--hint'[Conf]':off \
 	--hint'[Processing]':off \

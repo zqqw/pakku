@@ -1,6 +1,7 @@
 import
   options, os, posix, sequtils, sets, strutils, sugar,
   utils
+when not declared(system.stdout): import std/syncio
 
 type
   ArgumentType* {.pure.} = enum
@@ -26,7 +27,7 @@ iterator readLines(): string =
   try:
     while true:
       yield readLine(stdin)
-  except:
+  except CatchableError:
     discard
 
 iterator splitSingle(valueFull: string, optionsWithParameter: HashSet[OptionKey],

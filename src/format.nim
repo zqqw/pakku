@@ -1,6 +1,7 @@
 import
   std/[macros, options, posix, sequtils, strutils, sugar, times, unicode, terminal],
   utils
+when not declared(system.stdout): import std/syncio
 
 type
   PackageLineFormat* = tuple[

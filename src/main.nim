@@ -1,6 +1,7 @@
 import
   options, os, posix, re, sequtils, strutils, sugar,
   args, config, format, pacman, utils
+when not declared(system.stdout): import std/syncio
 
 import
   "feature/localquery",

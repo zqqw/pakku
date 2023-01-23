@@ -108,7 +108,7 @@ proc getRpcPackageInfosInternal(pkgs: seq[string], repo: string, useTimeout: boo
         (@[], some(getCurrentException().msg))
       except JsonParsingError:
         (@[], some(tr"failed to parse server response"))
-      except:
+      except CatchableError:
         (@[], some(getCurrentException().msg))
 
 proc getRpcPackageInfos*(pkgs: seq[string], repo: string, useTimeout: bool, configColor: bool):

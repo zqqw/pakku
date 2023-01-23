@@ -1,6 +1,7 @@
 import
   std/[options, posix, re, sequtils, sets, strutils, sugar, tables],
   utils
+when not declared(system.stdout): import std/syncio
 
 type
   ColorMode* {.pure.} = enum

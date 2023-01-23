@@ -1,5 +1,6 @@
 import
   os, posix, sequtils, strutils, sugar
+when not declared(system.stdout): import std/syncio
 
 proc splitCommands(params: seq[string], index: int, res: seq[seq[string]]): seq[seq[string]] =
   if index < params.len:
@@ -68,7 +69,7 @@ proc handleInstall*(params: seq[string]): int =
         let dest = destination & "/" & name
         copyFile(pkg.file, dest)
         discard chown(cstring(dest), (Uid) uid, (Gid) gid)
-      except:
+      except CatchableError:
         discard
 
   let asexplicit = install.filter(p => p.mode == "explicit").map(p => p.name)
