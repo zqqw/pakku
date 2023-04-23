@@ -297,17 +297,30 @@ proc printColonUserChoiceWithHelp*(color: bool, s: string,
 
 macro choices*(choices: varargs[untyped]): untyped =
   result = newNimNode(nnkBracket)
-  for choice in choices:
-    case choice.kind:
-      of nnkCharLit:
-        result.add(newPar(choice, newCall(ident("none"), ident("string"))))
-      of nnkPar,nnkTupleConstr:
-        if choice.len == 2:
-          result.add(newPar(choice[0], newCall(ident("some"), choice[1])))
+  when NimVersion >= "1.6.0":
+    for choice in choices:
+      case choice.kind:
+        of nnkCharLit:
+          result.add(nnkTupleConstr.newTree(choice, newCall(ident("none"), ident("string"))))
+        of nnkTupleConstr:
+          if choice.len == 2:
+            result.add(nnkTupleConstr.newTree(choice[0], newCall(ident("some"), choice[1])))
+          else:
+            error("error expected 2 items got " & $choice.len)
         else:
-          error("error expected 2 items got " & $choice.len)
-      else:
-        error("error got " & $choice.kind)
+          error("error got " & $choice.kind)
+  else:
+    for choice in choices:
+      case choice.kind:
+        of nnkCharLit:
+          result.add(newPar(choice, newCall(ident("none"), ident("string"))))
+        of nnkPar, nnkTupleConstr:
+          if choice.len == 2:
+            result.add(newPar(choice[0], newCall(ident("some"), choice[1])))
+          else:
+            error("error expected 2 items got " & $choice.len)
+        else:
+          error("error got " & $choice.kind)
 
 proc printProgressFull*(bar: bool, chomp: bool, title: string): ((string, float) -> void, () -> void) =
   let width = getWindowSize().width
