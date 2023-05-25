@@ -260,7 +260,7 @@ proc parseSrcInfoKeys(srcInfo: string):
   for line in srcInfo.splitLines:
     if line.match(re"[\t\ ]*(\w+)\ =\ (.*)", matches):
       let key = matches[0]
-      let value = matches[1]
+      let value = strip(matches[1])
 
       if key == "pkgbase":
         values = baseSeq
