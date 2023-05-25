@@ -750,25 +750,22 @@ proc resolveDependencies(config: Config, pkgInfos: seq[PackageInfo],
     findDependencies(config, handle, dbs, pkgInfos, additionalPkgInfos,
       nodepsCount, assumeInstalled, printMode, noaur)
 
-  if unsatisfied.len > 0:
-    clearPaths(paths)
+  let buildAndAurNamesSet = pkgInfos.map(i => i.rpc.name).toHashSet
+  let fullPkgInfos = (pkgInfos & (block:collect(newSeq):
+    for s in satisfied.values:
+      for i in s.buildPkgInfo:
+        if not (i.rpc.name in buildAndAurNamesSet):
+          i
+    )).deduplicatePkgInfos(config,false)
+  let additionalPacmanTargets = collect(newSeq):
+    for x in satisfied.values:
+      if not x.installed and x.buildPkgInfo.isNone:
+        x.name
+  let orderedPkgInfos = orderInstallation(fullPkgInfos, satisfied)
+  if unsatisfied.len > 0: # dependency not found
     printUnsatisfied(config, satisfied, unsatisfied)
-    (false, satisfied, newSeq[string](),
-      newSeq[seq[seq[PackageInfo]]](), newSeq[string]())
+    (false, satisfied, additionalPacmanTargets, orderedPkgInfos, paths)
   else:
-    let buildAndAurNamesSet = pkgInfos.map(i => i.rpc.name).toHashSet
-    let fullPkgInfos = (pkgInfos & (block:collect(newSeq):
-      for s in satisfied.values:
-        for i in s.buildPkgInfo:
-          if not (i.rpc.name in buildAndAurNamesSet):
-            i
-      )).deduplicatePkgInfos(config,false)
-    let additionalPacmanTargets = collect(newSeq):
-      for x in satisfied.values:
-        if not x.installed and x.buildPkgInfo.isNone:
-          x.name
-    let orderedPkgInfos = orderInstallation(fullPkgInfos, satisfied)
-
     (true, satisfied, additionalPacmanTargets, orderedPkgInfos, paths)
 
 proc confirmViewAndImportKeys(config: Config, basePackages: seq[seq[seq[PackageInfo]]],
@@ -1266,11 +1263,7 @@ proc handleInstall(args: seq[Argument], config: Config, syncTargets: seq[SyncPac
         resolveDependencies(config, pkgInfos, additionalPkgInfos, false,
           nodepsCount, assumeInstalled, noaur)
 
-      let confirmAndResolveCode = if resolveSuccess:
-          confirmViewAndImportKeys(config, basePackages, installed, noconfirm)
-        else:
-          1
-
+      let confirmAndResolveCode = confirmViewAndImportKeys(config, basePackages, installed, noconfirm)
       let paths = initialPaths & dependencyPaths
       if confirmAndResolveCode != 0:
         clearPaths(paths, true)
