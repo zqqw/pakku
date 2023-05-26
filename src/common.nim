@@ -674,7 +674,7 @@ proc clonePackageRepoInternal(config: Config, base: string, version: string,
       if git.branch.isSome:
         if git.url == "https://gitea.artixlinux.org/packages":
           var artixUrl: string = git.url
-          artixUrl.add(capitalizeAscii($(base[0])) & "/" & $(base) & ".git")
+          artixUrl.add("/" & $(base) & ".git")
           execResult(gitCmd, "-C", config.tmpRoot(dropPrivileges), "clone", "-q", artixUrl)
         else:
           execResult(gitCmd, "-C", config.tmpRoot(dropPrivileges),
