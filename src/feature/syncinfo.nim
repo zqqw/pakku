@@ -53,7 +53,7 @@ proc formatDate(date: int64): Option[string] =
   var ltime: Tm
   discard localtime_r(time, ltime)
   var buffer: array[100, char]
-  let res = strftime(addr(buffer), buffer.len, "%c", ltime)
+  let res = strftime(cast[cstring](addr(buffer)), buffer.len, "%c", ltime)
   if res > 0: some(buffer.toString(none(int))) else: none(string)
 
 proc handleTarget(config: Config, padding: int, args: seq[Argument],
