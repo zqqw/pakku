@@ -425,7 +425,7 @@ proc buildLoop(config: Config, pkgInfos: seq[PackageInfo], skipDeps: bool,
 
   let confFileEnv = getEnv("MAKEPKG_CONF")
   let confFile = if confFileEnv.len == 0:
-      sysConfDir & "/makepkg.conf"
+      SysConfDir & "/makepkg.conf"
     else:
       confFileEnv
 

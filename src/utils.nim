@@ -42,10 +42,16 @@ proc cunsetenv*(name: cstring): cint
   {.importc: "unsetenv", header: "<stdlib.h>".}
 
 const
-  pkgLibDir* = getEnv("PROG_PKGLIBDIR")
-  localStateDir* = getEnv("PROG_LOCALSTATEDIR")
-  sysConfDir* = getEnv("PROG_SYSCONFDIR")
+  pakkuPrefix* {.strdefine.} = ""
+  LocalStateDir* {.strdefine.} = ""
+  SysConfDir* {.strdefine.} = ""
+static:
+  doAssert pakkuPrefix != "", "config.nims must define pakkuPrefix"
+  doAssert LocalStateDir != "", "config.nims must define LocalStateDir"
+  doAssert SysConfDir != "", "config.nims must define SysConfDir"
 
+const
+  pkgLibDir* = pakkuPrefix / "/lib/pakku"
   bashCmd* = "/bin/bash"
   suCmd* = "/usr/bin/su"
   sudoCmd* = "/usr/bin/sudo"

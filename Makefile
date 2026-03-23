@@ -1,5 +1,4 @@
 VERSION = 0.16
-COPYRIGHT = 2018-2019 kitsunyan
 DIST_MODE = false
 
 MAN_PAGES = \
@@ -19,6 +18,7 @@ TARGETS_NODIST = \
 DIST = \
 	COPYING \
 	Makefile \
+	config.nims \
 	pakku.conf \
 	completion/bash.patch \
 	completion/bash-git.patch \
@@ -50,23 +50,11 @@ else
 RVERSION = ${VERSION}
 endif
 
-NIM_TARGET = release
-NIM_OPTIMIZE = size
 NIM_CACHE_DIR = nimcache
 
 NIM_OPTIONS = \
-	--putenv:'PROG_VERSION'="${RVERSION}" \
-	--putenv:'PROG_COPYRIGHT'="${COPYRIGHT}" \
-	--putenv:'PROG_PKGLIBDIR'="${PKGLIBDIR}" \
-	--putenv:'PROG_LOCALSTATEDIR'="${LOCALSTATEDIR}" \
-	--putenv:'PROG_SYSCONFDIR'="${SYSCONFDIR}" \
-	-d:'${NIM_TARGET}' \
-#	-d:nimPreviewSlimSystem \
-	--opt:'${NIM_OPTIMIZE}' \
-	--hint'[Conf]':off \
-	--hint'[Processing]':off \
-	--hint'[Link]':off \
-	--hint'[SuccessX]':off
+	-d:pakkuVersion="${RVERSION}" \
+	-d:pakkuPrefix="${PREFIX}"
 
 ASCIIDOC_OPTIONS = \
 	-f doc/asciidoc.conf \

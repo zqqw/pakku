@@ -201,13 +201,21 @@ proc handleHelp(operation: OperationType) =
         discard
 
 const
-  version = getEnv("PROG_VERSION")
-  copyright = getEnv("PROG_COPYRIGHT")
+  pakkuVersion {.strdefine.} = ""
+  pakkuCopyright {.strdefine.} = ""
+static:
+  doAssert pakkuVersion != "", "config.nims must define pakkuVersion"
+  doAssert pakkuCopyright != "", "config.nims must define pakkuCopyright"
+
 
 proc handleVersion(): int =
-  echo()
-  echo(' '.repeat(23), "Pakku v", version)
-  echo(' '.repeat(23), "Copyright (C) ", copyright)
+  const
+    indent = spaces(23)
+    prefix = "Copyright (C) "
+  echo("\n", indent, "Pakku v", pakkuVersion)
+  for line in pakkuCopyright.splitLines():
+    if line != "":
+      echo(indent, prefix, line)
   pacmanExec(noPrefix, false, ("V", none(string), ArgumentType.short))
 
 discard setlocale(LC_ALL, "")
@@ -232,7 +240,7 @@ let init = withErrorHandler(none(bool),
 
   let
     parsedArgs = splitArgs(
-      commandLineParams(), optionsWithParameter, 
+      commandLineParams(), optionsWithParameter,
       (operations.map(o => o.pair.long) & allOptions.map(o => o.pair.long))
       .deduplicate)
 
