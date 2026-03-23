@@ -1028,7 +1028,7 @@ proc checkNeeded(installed: Table[string, Installed],
 
 proc obtainAurPackageInfos(config: Config, rpcInfos: seq[RpcPackageInfo],
   rpcAurTargets: seq[FullPackageTarget], installed: Table[string, Installed],
-  printMode: bool, needed: bool, upgradeCount: int): (seq[PackageInfo], seq[PackageInfo],
+  printMode: bool, noconfirm: bool, needed: bool, upgradeCount: int): (seq[PackageInfo], seq[PackageInfo],
   seq[string], seq[Installed], seq[LocalIsNewer], seq[string]) =
   let targetRpcInfoPairs: seq[tuple[rpcInfo: RpcPackageInfo, upgradeable: bool]] =
     rpcAurTargets.map(f => f.rpcInfo.get).map(i => (i, installed
@@ -1062,9 +1062,43 @@ proc obtainAurPackageInfos(config: Config, rpcInfos: seq[RpcPackageInfo],
           (res.needed, none(LocalIsNewer))
       (i, newNeeded, localIsNewer)))
 
+  let selectedUpgradeRpcInfos = if printMode or noconfirm: (block:
+      upgradeStructs.filter(p => p.needed).map(p => p.rpcInfo))
+    else: (block:
+      let neededUpgradeStructs = upgradeStructs.filter(p => p.needed)
+
+      if neededUpgradeStructs.len == 0:
+        @[]
+      else:
+        printColon(config.color, tr"Available AUR upgrades")
+        echo()
+        let numberWidth = max(($neededUpgradeStructs.len).len, 2)
+        for index, upgrade in neededUpgradeStructs:
+          let installedVersion = installed[upgrade.rpcInfo.name].version
+          let number = align($(index + 1), numberWidth, ' ')
+          echo(number, ") ", config.aurRepo, "/", upgrade.rpcInfo.name,
+            " ", installedVersion, " -> ", upgrade.rpcInfo.version)
+        echo()
+
+        proc inputLoop(): seq[RpcPackageInfo] =
+          while true:
+            let input = printColonUserInput(config.color,
+              tr"Packages to skip (syntax: 1, 3-5, 7 11)" & ":", noconfirm, "", "")
+            let intervalsOpt = parseNumberIntervals(input, neededUpgradeStructs.len)
+            if intervalsOpt.isSome:
+              let intervals = intervalsOpt.unsafeGet
+              return block:
+                var filtered: seq[RpcPackageInfo]
+                for idx, i in neededUpgradeStructs:
+                  if not intervals.anyIt(idx + 1 in it):
+                    filtered.add i.rpcInfo
+                filtered
+            printError(config.color, tr"invalid package selection")
+        inputLoop())
+
   let targetRpcInfos = targetRpcInfoPairs
     .filter(i => not needed or i.upgradeable).map(i => i.rpcInfo)
-  let upgradeRpcInfos = upgradeStructs.filter(p => p.needed).map(p => p.rpcInfo)
+  let upgradeRpcInfos = selectedUpgradeRpcInfos
   let fullRpcInfos = targetRpcInfos & upgradeRpcInfos
 
   let (update, terminate) = createCloneProgress(config, fullRpcInfos.len, true, printMode)
@@ -1179,7 +1213,7 @@ proc resolveBuildTargets(config: Config, syncTargets: seq[SyncPackageTarget],
 
   let (aurPkgInfos, additionalPkgInfos, aurPaths, upToDateNeeded, localIsNewerSeq, aperrors) =
     obtainAurPackageInfos(config, rpcInfos, rpcAurTargets, installedTable,
-      printMode, needed, upgradeCount)
+      printMode, noconfirm, needed, upgradeCount)
   for e in aperrors: printError(config.color, e)
 
   let upToDateNeededTable: Table[string, PackageReference] = upToDateNeeded.map(i => (i.name,
