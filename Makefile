@@ -73,14 +73,14 @@ completion/bash: \
 	completion/bash.patch \
 	completion/bash-git.patch
 	@echo "GEN: $@"
-	@(cd completion && ./make.sh 'bash')
+	@(cd completion && /bin/bash ./make.sh 'bash')
 
 completion/zsh: \
 	completion/make.sh \
 	completion/zsh.patch \
 	completion/zsh-git.patch
 	@echo "GEN: $@"
-	@(cd completion && ./make.sh 'zsh')
+	@(cd completion && /bin/bash ./make.sh 'zsh')
 
 ${MAN_PAGES:=.in}: ${MAN_PAGES:=.txt}
 	@echo "GEN: $@"
@@ -118,39 +118,39 @@ ifneq (${DIST_MODE},true)
 endif
 
 define install
-	@echo 'INSTALL: $3'
-	@install -Dm$1 $2 '${DESTDIR}$3'
+	@echo "INSTALL: ${DESTDIR}$3"
+	@install -Dm$1 $2 "${DESTDIR}$3"
 endef
 
 define uninstall
-	@echo 'UNINSTALL: $1/$2'
-	@rm '${DESTDIR}$1/$2'
-	@rmdir -p '${DESTDIR}$1' 2> /dev/null || true
+	@echo "UNINSTALL: ${DESTDIR}$1/$2"
+	@rm "${DESTDIR}$1/$2"
+	@rmdir -p "${DESTDIR}$1" 2> /dev/null || true
 endef
 
 install:
-	$(call install,644,'completion/bash','${BASHCOMPLETIONSDIR}/pakku')
-	$(call install,644,'completion/zsh','${ZSHCOMPLETIONSDIR}/_pakku')
-	$(call install,644,'doc/pakku.8','${MANDIR}/man8/pakku.8')
-	$(call install,644,'doc/pakku.conf.5','${MANDIR}/man5/pakku.conf.5')
-	$(call install,755,'lib/tools','${PKGLIBDIR}/tools')
-	@echo 'INSTALL: ${PKGLIBDIR}/bisect'
+	$(call install,644,completion/bash,${BASHCOMPLETIONSDIR}/pakku)
+	$(call install,644,completion/zsh,${ZSHCOMPLETIONSDIR}/_pakku)
+	$(call install,644,doc/pakku.8,${MANDIR}/man8/pakku.8)
+	$(call install,644,doc/pakku.conf.5,${MANDIR}/man5/pakku.conf.5)
+	$(call install,755,lib/tools,${PKGLIBDIR}/tools)
+	@echo "INSTALL: ${DESTDIR}${PKGLIBDIR}/bisect"
 	@ln -s tools ${DESTDIR}${PKGLIBDIR}/bisect
-	@echo 'INSTALL: ${PKGLIBDIR}/install'
+	@echo "INSTALL: ${DESTDIR}${PKGLIBDIR}/install"
 	@ln -s tools ${DESTDIR}${PKGLIBDIR}/install
-	$(call install,755,'src/pakku','${BINDIR}/pakku')
-	$(call install,644,'pakku.conf','${SYSCONFDIR}/pakku.conf')
+	$(call install,755,src/pakku,${BINDIR}/pakku)
+	$(call install,644,pakku.conf,${SYSCONFDIR}/pakku.conf)
 
 uninstall:
-	$(call uninstall,'${BASHCOMPLETIONSDIR}','pakku')
-	$(call uninstall,'${ZSHCOMPLETIONSDIR}','_pakku')
-	$(call uninstall,'${MANDIR}/man8','pakku.8')
-	$(call uninstall,'${MANDIR}/man5','pakku.conf.5')
-	$(call uninstall,'${PKGLIBDIR}','tools')
-	$(call uninstall,'${PKGLIBDIR}','bisect')
-	$(call uninstall,'${PKGLIBDIR}','install')
-	$(call uninstall,'${BINDIR}','pakku')
-	$(call uninstall,'${SYSCONFDIR}','pakku.conf')
+	$(call uninstall,${BASHCOMPLETIONSDIR},pakku)
+	$(call uninstall,${ZSHCOMPLETIONSDIR},_pakku)
+	$(call uninstall,${MANDIR}/man8,pakku.8)
+	$(call uninstall,${MANDIR}/man5,pakku.conf.5)
+	$(call uninstall,${PKGLIBDIR},tools)
+	$(call uninstall,${PKGLIBDIR},bisect)
+	$(call uninstall,${PKGLIBDIR},install)
+	$(call uninstall,${BINDIR},pakku)
+	$(call uninstall,${SYSCONFDIR},pakku.conf)
 
 distcheck:
 	@rm -rf 'pakku-${RVERSION}'

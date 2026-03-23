@@ -30,13 +30,13 @@ when defined(release):
   --hint:"[Link]:off"
   --hint:"[SuccessX]:off"
 
-import std/strutils
+import std/[os, strutils]
 
 task build, "development debug build":
   # propagates custom args
   let nargs = paramCount()
   var extra = newSeq[string]()
-  if nargs > 2: # other than `nim build`
+  if nargs > 1:
     var skippedTask = false
     for i in 1..nargs:
       let arg = paramStr(i)
@@ -45,3 +45,20 @@ task build, "development debug build":
         continue
       extra.add arg
   selfExec("c " & extra.join(" ") & " -o:pakku src/main.nim")
+
+task testmakefile, "run Makefile smoke tests":
+  let destdir = getTempDir() / "pakku-makefile-test"
+  let overriddenPrefix = "/usr"
+  let pakkuBin = destdir / overriddenPrefix.strip(chars = {'/'}) / "bin" / "pakku"
+  if dirExists(destdir): rmDir(destdir)
+  for cmd in [
+    "make clean",
+    "make",
+    "make PREFIX='" & overriddenPrefix & "' src/pakku",
+    "make PREFIX='" & overriddenPrefix & "' DESTDIR='" & destdir & "' install",
+    "'" & pakkuBin & "' -V",
+    "make PREFIX='" & overriddenPrefix & "' DESTDIR='" & destdir & "' uninstall",
+  ]:
+    exec cmd
+  if dirExists(destdir):
+    quit "DESTDIR still exists after uninstall: " & destdir
