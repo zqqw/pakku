@@ -416,6 +416,7 @@ proc bisectVersion(repoPath: string, debug: bool, firstCommit: Option[string],
       realLastThreeCommits[0 .. index]
     else:
       realLastThreeCommits
+  let bisectCommand = helperToolCommand("bisect")
 
   proc checkCommit(commit: string): Option[string] =
     let checkout1Code = forkExecWithoutOutput(gitCmd, "-C", repoPath,
@@ -426,8 +427,7 @@ proc bisectVersion(repoPath: string, debug: bool, firstCommit: Option[string],
     else:
       let foundVersion = forkWaitRedirect(() => (block:
         if not dropPrivileges or dropPrivRedirect():
-          execRedirect(pkgLibDir & "/bisect",
-            compareMethod, repoPath & "/" & gitSubdir, version)
+          execRedirect(bisectCommand & @[compareMethod, repoPath / gitSubdir, version])
         else:
           quit(1)))
         .output.optFirst
@@ -465,8 +465,13 @@ proc bisectVersion(repoPath: string, debug: bool, firstCommit: Option[string],
     if bisectStartCode != 0:
       none(string)
     else:
-      discard forkExecWithoutOutput(gitCmd, "-C", repoPath,
-        "bisect", "run", pkgLibDir & "/bisect", compareMethod, gitSubdir, version)
+      if bisectCommand.len == 1:
+        discard forkExecWithoutOutput(gitCmd, "-C", repoPath,
+          "bisect", "run", bisectCommand[0], compareMethod, gitSubdir, version)
+      else:
+        discard forkExecWithoutOutput(gitCmd, "-C", repoPath,
+          "bisect", "run", bisectCommand[0], bisectCommand[1],
+          compareMethod, gitSubdir, version)
 
       let commit = forkWaitRedirect(() => (block:
         if not dropPrivileges or dropPrivRedirect():
@@ -584,6 +589,8 @@ proc findVersion(repoPath: string, debug: bool, version: string,
       else:
         quit(1)))
 
+  let bisectCommand = helperToolCommand("bisect")
+
 # find commit containing correct version using git log grep on commit messages
 
   var commandOutput: tuple[output: seq[string], code: int]
@@ -597,7 +604,7 @@ proc findVersion(repoPath: string, debug: bool, version: string,
     if forkExecWithoutOutput(gitCmd, "-C", repoPath, "checkout", commandOutput.output[i]) == 0:
       let foundVersion = forkWaitRedirect(() => (block:
         if not dropPrivileges or dropPrivRedirect():
-          execRedirect(pkgLibDir & "/bisect", "source", repoPath & "/trunk", version, "true")
+          execRedirect(bisectCommand & @["source", repoPath / "trunk", version, "true"])
         else:
           quit(1)))
       if foundVersion.code == 1:
@@ -619,7 +626,7 @@ proc findVersion(repoPath: string, debug: bool, version: string,
     if forkExecWithoutOutput(gitCmd, "-C", repoPath, "checkout", commits.untested[middle]) == 0:
       let foundVersion = forkWaitRedirect(() => (block:
         if not dropPrivileges or dropPrivRedirect():
-          execRedirect(pkgLibDir & "/bisect", "source", repoPath & "/trunk", version, "true")
+          execRedirect(bisectCommand & @["source", repoPath / "trunk", version, "true"])
         else:
           quit(1)))
 
@@ -651,7 +658,7 @@ proc findVersion(repoPath: string, debug: bool, version: string,
     if forkExecWithoutOutput(gitCmd, "-C", repoPath, "checkout", allRevisions.output[i]) == 0:
       let foundVersion = forkWaitRedirect(() => (block:
         if not dropPrivileges or dropPrivRedirect():
-          execRedirect(pkgLibDir & "/bisect", "source", repoPath & "/trunk", version, "true")
+          execRedirect(bisectCommand & @["source", repoPath / "trunk", version, "true"])
         else:
           quit(1)))
       if foundVersion.code == 1:
@@ -782,7 +789,7 @@ proc obtainBuildPkgInfosInternal(config: Config, bases: seq[LookupBaseGroup],
               x
 
         let pkgInfosTable = pkgInfos.map(i => (i.rpc.name, i)).toTable
-        
+
         let foundPkgInfos = collect(newSeq):
           for y in pacmanTargetNames:
             for x in pkgInfosTable.opt(y):

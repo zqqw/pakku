@@ -379,7 +379,7 @@ proc obtainPacmanConfig*(args: seq[Argument]): PacmanConfig =
 
   let sysroot = args.filter(a => a.matchOption(%%%"sysroot")).optFirst.map(a => a.value).flatten
 
-  let configFileRel = getAll(%%%"config").optLast.get(sysConfDir & "/pacman.conf")
+  let configFileRel = getAll(%%%"config").optLast.get(SysConfDir & "/pacman.conf")
   let (configTable, wasError) = readConfigFile(configFileRel.extendRel(sysroot))
 
   let options = configTable.opt("options").map(t => t[]).get(initTable[string, string]())
@@ -433,7 +433,7 @@ proc obtainPacmanConfig*(args: seq[Argument]): PacmanConfig =
       else:
         var pgpKeyserver = none(string)
         var file: File
-        if file.open(gpgRel.get(sysConfDir & "/pacman.d/gnupg").extendRel(sysroot) & "/gpg.conf"):
+        if file.open(gpgRel.get(SysConfDir & "/pacman.d/gnupg").extendRel(sysroot) & "/gpg.conf"):
           try:
             while true:
               let line = file.readLine()

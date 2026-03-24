@@ -42,10 +42,16 @@ proc cunsetenv*(name: cstring): cint
   {.importc: "unsetenv", header: "<stdlib.h>".}
 
 const
-  pkgLibDir* = getEnv("PROG_PKGLIBDIR")
-  localStateDir* = getEnv("PROG_LOCALSTATEDIR")
-  sysConfDir* = getEnv("PROG_SYSCONFDIR")
+  pakkuPrefix* {.strdefine.} = ""
+  LocalStateDir* {.strdefine.} = ""
+  SysConfDir* {.strdefine.} = ""
+static:
+  doAssert pakkuPrefix != "", "config.nims must define pakkuPrefix"
+  doAssert LocalStateDir != "", "config.nims must define LocalStateDir"
+  doAssert SysConfDir != "", "config.nims must define SysConfDir"
 
+const
+  pkgLibDir* = pakkuPrefix / "/lib/pakku"
   bashCmd* = "/bin/bash"
   suCmd* = "/usr/bin/su"
   sudoCmd* = "/usr/bin/sudo"
@@ -55,6 +61,26 @@ const
   gpgConfCmd* = "/usr/bin/gpgconf"
   pacmanCmd* = "/usr/bin/pacman"
   makepkgCmd* = "/usr/bin/makepkg"
+
+proc helperToolCommand*(tool: string): seq[string] =
+  ## Resolve a helper tool command.
+  ##
+  ## Prefer the installed helper symlink in `pkgLibDir`.
+  ## When pakku runs from a development environment, falls back
+  ## to the local `lib/tools` wrapper and passes the helper name as argv[1].
+  let installedTool = pkgLibDir / tool
+  if fileExists(installedTool):
+    return @[installedTool]
+
+  let appDir = getAppFilename().parentDir()
+  let fallbackTools = @[
+    appDir / "lib" / "tools",
+    appDir.parentDir() / "lib" / "tools"
+  ]
+  for toolsPath in fallbackTools:
+    if fileExists(toolsPath):
+      return @[toolsPath, tool]
+  @[installedTool]
 
 template haltError*(exitCode: int): untyped =
   var e: ref HaltError

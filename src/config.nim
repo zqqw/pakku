@@ -126,10 +126,10 @@ proc pacmanDbRel*(config: PacmanConfig): string =
   else:
     let root = config.pacmanRootRel
     let workRoot = if root == "/": "" else: root
-    workRoot & localStateDir & "/lib/pacman/"
+    workRoot & LocalStateDir & "/lib/pacman/"
 
 proc pacmanCacheRel*(config: PacmanConfig): string =
-  config.cacheRelOption.get(localStateDir & "/cache/pacman/pkg")
+  config.cacheRelOption.get(LocalStateDir & "/cache/pacman/pkg")
 
 proc simplifyConfigPath(path: string): string =
   if path.find("//") >= 0:
@@ -141,7 +141,7 @@ proc extendRel*(pathRel: string, sysroot: Option[string]): string =
   sysroot.map(s => (s & "/" & pathRel).simplifyConfigPath).get(pathRel)
 
 proc obtainConfig*(config: PacmanConfig): Config =
-  let (configTable, _) = readConfigFile(sysConfDir & "/pakku.conf")
+  let (configTable, _) = readConfigFile(SysConfDir & "/pakku.conf")
   let options = configTable.opt("options").map(t => t[]).get(initTable[string, string]())
 
   let root = config.pacmanRootRel.extendRel(config.sysrootOption)
