@@ -1071,31 +1071,53 @@ proc obtainAurPackageInfos(config: Config, rpcInfos: seq[RpcPackageInfo],
     let reference = i.toPackageReference
     rpcAurTargets.filter(f => f.sync.target.reference.isProvidedBy(reference, true)).len == 0))
 
-  let upgradeStructs: seq[tuple[rpcInfo: RpcPackageInfo, needed: bool,
-    localIsNewer: Option[LocalIsNewer]]] = installedUpgradeRpcInfos
-    .map(i => (block:
-      let res = installed.checkNeeded(i.name, i.version, upgradeCount >= 2)
-      let (newNeeded, localIsNewer) = if i.name.isVcs:
-          # Don't warn about newer local git packages and don't downgrade them
-          (installed.checkNeeded(i.name, i.version, false).needed, none(LocalIsNewer))
-        elif not res.needed and res.vercmp < 0:
-          (res.needed, some((i.name, installed[i.name].version, i.version)))
+  type Upgrade = tuple[
+      rpcInfo: RpcPackageInfo,
+      needed: bool,
+      localIsNewer: Option[LocalIsNewer]
+    ]
+  let upgradeStructs: seq[Upgrade] = installedUpgradeRpcInfos.mapIt:
+    let res = installed.checkNeeded(it.name, it.version, upgradeCount >= 2)
+    let (newNeeded, localIsNewer) =
+      if it.name.isVcs:
+        # Don't warn about newer local git packages and don't downgrade them
+        (installed.checkNeeded(it.name, it.version, false).needed, none(LocalIsNewer))
+      elif not res.needed and res.vercmp < 0:
+        (res.needed, some((it.name, installed[it.name].version, it.version)))
+      else:
+        (res.needed, none(LocalIsNewer))
+    (it, newNeeded, localIsNewer)
+
+  let (reqUpgrades, ignoredUpgrades) = block:
+    var selectable, ignored: seq[Upgrade]
+    for u in upgradeStructs:
+      if u.needed:
+        if config.ignored(u.rpcInfo.name, installed[u.rpcInfo.name].groups):
+          ignored.add u
         else:
-          (res.needed, none(LocalIsNewer))
-      (i, newNeeded, localIsNewer)))
+          selectable.add u
+    (selectable, ignored)
 
-  let selectedUpgradeRpcInfos = if printMode or noconfirm: (block:
-      upgradeStructs.filter(p => p.needed).map(p => p.rpcInfo))
-    else: (block:
-      let neededUpgradeStructs = upgradeStructs.filter(p => p.needed)
+  for upgrade in ignoredUpgrades:
+    let installedVersion = installed[upgrade.rpcInfo.name].version
+    let newVersion = upgrade.rpcInfo.version
+    let warnStr = if vercmp(newVersion.cstring, installedVersion.cstring) < 0:
+        tra("%s: ignoring package downgrade (%s => %s)\n")
+      else:
+        tra("%s: ignoring package upgrade (%s => %s)\n")
+    printWarning(config.color, warnStr %
+      [upgrade.rpcInfo.name, installedVersion, newVersion])
 
-      if neededUpgradeStructs.len == 0:
-        @[]
+  let selectedUpgradeRpcInfos =
+    if printMode or noconfirm:
+      reqUpgrades.mapIt(it.rpcInfo)
+    else:
+      if reqUpgrades.len == 0: @[]
       else:
         printColon(config.color, tr"Available AUR upgrades")
         echo()
-        let numberWidth = max(($neededUpgradeStructs.len).len, 2)
-        for index, upgrade in neededUpgradeStructs:
+        let numberWidth = max(($reqUpgrades.len).len, 2)
+        for index, upgrade in reqUpgrades:
           let installedVersion = installed[upgrade.rpcInfo.name].version
           let number = align($(index + 1), numberWidth, ' ')
           echo(number, ") ", config.aurRepo, "/", upgrade.rpcInfo.name,
@@ -1106,17 +1128,17 @@ proc obtainAurPackageInfos(config: Config, rpcInfos: seq[RpcPackageInfo],
           while true:
             let input = printColonUserInput(config.color,
               tr"Packages to skip (syntax: 1, 3-5, 7 11)" & ":", noconfirm, "", "")
-            let intervalsOpt = parseNumberIntervals(input, neededUpgradeStructs.len)
+            let intervalsOpt = parseNumberIntervals(input, reqUpgrades.len)
             if intervalsOpt.isSome:
               let intervals = intervalsOpt.unsafeGet
               return block:
                 var filtered: seq[RpcPackageInfo]
-                for idx, i in neededUpgradeStructs:
+                for idx, i in reqUpgrades:
                   if not intervals.anyIt(idx + 1 in it):
                     filtered.add i.rpcInfo
                 filtered
             printError(config.color, tr"invalid package selection")
-        inputLoop())
+        inputLoop()
 
   let targetRpcInfos = targetRpcInfoPairs
     .filter(i => not needed or i.upgradeable).map(i => i.rpcInfo)
