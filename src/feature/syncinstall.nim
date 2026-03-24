@@ -683,15 +683,15 @@ proc installGroupFromSources(config: Config, commonArgs: seq[Argument],
       let pacmanDatabaseParams = pacmanCmd & pacmanParams(config.color,
         commonArgs.keepOnlyOptions(commonOptions) & ("D", none(string), ArgumentType.short))
 
-      let installParams = config.sudoCommand & (pkgLibDir & "/install") &
-        cacheDir & $cacheUser & $cacheGroup &
-        $pacmanUpgradeParams.len & pacmanUpgradeParams &
-        $pacmanDatabaseParams.len & pacmanDatabaseParams &
-        (block:collect(newSeq):
-          for i in installWithReason:
-            for x in [i.name,i.file,i.mode]:
-              x
-        )
+      let installParams = block:
+        var p = config.sudoCommand
+        p.add helperToolCommand("install")
+        p.add [cacheDir, $cacheUser, $cacheGroup, $pacmanUpgradeParams.len]
+        p.add pacmanUpgradeParams
+        p.add $pacmanDatabaseParams.len
+        p.add pacmanDatabaseParams
+        for i in installWithReason: p.add [i.name, i.file, i.mode]
+        p
 
       let code = forkWait(() => execResult(installParams))
       if code != 0:
