@@ -1,5 +1,6 @@
 import
   std/[
+    algorithm,
     hashes,
     options,
     os,
@@ -110,6 +111,50 @@ template orElse*[T, R](opt1: Option[T], opt2: Option[R]): Option[R] =
 
 template hash*[T](opt: Option[T]): int =
   opt.map(hash).get(0)
+
+proc parseNumberIntervals*(input: string; maxValue: Positive
+  ): Option[seq[Slice[int]]] =
+  type Interval = Slice[int]
+  if maxValue < 1: return some(newSeq[Interval]())
+  let normalized = input.multiReplace(({'\t', '\n', '\r', ','}, ' '))
+  let tokens = normalized.splitWhitespace()
+  if tokens.len == 0: return some(newSeq[Interval]())
+
+  var intervals = newSeq[Interval](tokens.len)
+  for token in tokens:
+    let dash = token.find('-')
+    if dash < 0: # single value
+      try:
+        let v = token.parseUint()
+        if v notin 1.uint..maxValue.uint:
+          return none(seq[Interval])
+        intervals.add (v.int..v.int)
+      except ValueError:
+        return none(seq[Interval])
+    else: # range
+      if dash == 0 or dash == token.high or token.find('-', dash + 1) >= 0:
+        return none(seq[Interval])
+      try:
+        let a = token[0..(dash-1)].parseUint()
+        let b = token[(dash+1)..^1].parseUint()
+        if a < 1.uint or b < 1.uint or a > b or b > maxValue.uint:
+          return none(seq[Interval])
+        intervals.add(a.int..b.int)
+      except ValueError: return none(seq[Interval])
+  intervals.sort(proc(x, y: Interval): int = cmp(y.a, x.a)) # by starts, reversed
+
+  var merged: seq[Interval] = @[]
+  while intervals.len > 0:
+    let iv = intervals.pop()
+    if merged.len == 0: merged.add iv
+    else:
+      var last = merged[^1]
+      if iv.a <= last.b + 1:
+        if iv.b > last.b:
+          last.b = iv.b
+        merged[^1] = last
+      else: merged.add iv
+  some(merged)
 
 proc opt*[K, V](table: Table[K, V], key: K): Option[V] =
   if table.hasKey(key): some(table[key]) else: none(V)
