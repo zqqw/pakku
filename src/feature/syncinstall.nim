@@ -582,7 +582,11 @@ proc buildFromSources(config: Config, commonArgs: seq[Argument],
 
 proc installGroupFromSources(config: Config, commonArgs: seq[Argument],
   basePackages: seq[seq[PackageInfo]], explicits: HashSet[string],
-  skipDeps: bool, noconfirm: bool): (seq[(string, string)], int) =
+  skipDeps: bool, noconfirm: bool): tuple[
+    installedAs: seq[(string, string)],
+    code: int,
+    keepBuiltArtifacts: bool
+  ] =
   var lastBase: string
   var trunkPath: bool
 
@@ -620,7 +624,7 @@ proc installGroupFromSources(config: Config, commonArgs: seq[Argument],
         for x in filesTable.opt(i.rpc.name):
           (name:i.rpc.name,file:x)
 
-  proc handleTmpRoot(clear: bool) =
+  proc cleanupBuiltArtifacts(clear: bool) =
     let installFiles = install.map(p => p.file)
     for pair in allFiles:
       if clear or not (pair.file in installFiles):
@@ -637,14 +641,14 @@ proc installGroupFromSources(config: Config, commonArgs: seq[Argument],
       discard chmod(cstring(config.tmpRootInitial & "/" & lastBase & "/trunk/pkg"), 0o0755)
     else:
       discard chmod(cstring(config.tmpRootInitial & "/" & lastBase & "/pkg"), 0o0755)
-    handleTmpRoot(true)
-    (newSeq[(string, string)](), buildCode)
+    cleanupBuiltArtifacts(true)
+    (installedAs: newSeq[(string, string)](), code: buildCode, keepBuiltArtifacts: false)
   else:
     if currentUser.uid != 0 and printColonUserChoice(config.color,
       tr"Continue installing?", ['y', 'n'], 'y', 'n',
       noconfirm, 'y') != 'y':
-      handleTmpRoot(false)
-      (newSeq[(string, string)](), 1)
+      cleanupBuiltArtifacts(false)
+      (installedAs: newSeq[(string, string)](), code: 1, keepBuiltArtifacts: true)
     else:
       let installWithReason = withAlpmConfig(config, false, handle, dbs, errors):
         let local = handle.local
@@ -695,8 +699,8 @@ proc installGroupFromSources(config: Config, commonArgs: seq[Argument],
 
       let code = forkWait(() => execResult(installParams))
       if code != 0:
-        handleTmpRoot(false)
-        (newSeq[(string, string)](), code)
+        cleanupBuiltArtifacts(false)
+        (installedAs: newSeq[(string, string)](), code: code, keepBuiltArtifacts: true)
       else:
         let cachePath = config.userCacheInitial.cache(CacheKind.repositories)
         for pkgInfos in basePackages:
@@ -720,13 +724,13 @@ proc installGroupFromSources(config: Config, commonArgs: seq[Argument],
             run(gitCmd, "-C", bareRepoPath, "tag", "-d", tag)
             run(gitCmd, "-C", bareRepoPath, "tag", tag)
 
-        handleTmpRoot(true)
+        cleanupBuiltArtifacts(true)
         let installedAs = collect(newSeq):
           for br in buildResults:
             for r in br.replacePkgInfos:
               if r.name.isSome:
                 (r.name.unsafeGet, r.pkgInfo.rpc.name)
-        (installedAs, 0)
+        (installedAs: installedAs, code: 0, keepBuiltArtifacts: false)
 
 proc deduplicatePkgInfos(pkgInfos: seq[PackageInfo],
   config: Config, printWarning: bool): seq[PackageInfo] =
@@ -1259,7 +1263,7 @@ proc handleInstall(args: seq[Argument], config: Config, syncTargets: seq[SyncPac
       let assumeInstalled = args.assumeInstalled
       let skipDeps = assumeInstalled.len > 0 or nodepsCount > 0
 
-      let (resolveSuccess, satisfied, additionalPacmanTargets, basePackages, dependencyPaths) =
+      let (_, satisfied, additionalPacmanTargets, basePackages, dependencyPaths) =
         resolveDependencies(config, pkgInfos, additionalPkgInfos, false,
           nodepsCount, assumeInstalled, noaur)
 
@@ -1332,18 +1336,19 @@ proc handleInstall(args: seq[Argument], config: Config, syncTargets: seq[SyncPac
               1
             else:
               proc installNext(index: int, installedAs: List[(string, string)],
-                lastCode: int): (Table[string, string], int, int) =
+                lastCode: int, keepBuiltArtifacts: bool): (Table[string, string], int, int, bool) =
                 if index < basePackages.len and lastCode == 0:
-                  let (addInstalledAs, code) = installGroupFromSources(config, commonArgs,
+                  let installResult = installGroupFromSources(config, commonArgs,
                     basePackages[index], explicits, skipDeps, noconfirm)
-                  installNext(index + 1, addInstalledAs ^& installedAs, code)
+                  installNext(index + 1, installResult.installedAs ^& installedAs,
+                    installResult.code, installResult.keepBuiltArtifacts)
                 else:
-                  (toSeq(installedAs.items).toTable, lastCode, index - 1)
+                  (toSeq(installedAs.items).toTable, lastCode, index - 1, keepBuiltArtifacts)
 
-              let (installedAs, code, index) = installNext(0, nil, 0)
+              let (installedAs, code, index, keepBuiltArtifacts) = installNext(0, nil, 0, false)
               if code != 0 and index < basePackages.len - 1:
                 printWarning(config.color, tr"installation aborted")
-              clearPaths(paths, true)
+              clearPaths(paths, tmpDir = not keepBuiltArtifacts)
 
               let newKeepNames = keepNames.map(n => installedAs.opt(n).get(n))
               let (_, finalUnrequired, finalUnrequiredWithoutOptional, _) =
