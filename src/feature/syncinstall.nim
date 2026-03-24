@@ -525,37 +525,45 @@ proc buildLoop(config: Config, pkgInfos: seq[PackageInfo], skipDeps: bool,
         (some(($confExt, targetPkgInfos & additionalPkgInfos)), 0, false)
 
 proc buildFromSources(config: Config, commonArgs: seq[Argument],
-  pkgInfos: seq[PackageInfo], skipDeps: bool, noconfirm: bool, trunkPath: bool): (Option[BuildResult], int) =
+  pkgInfos: seq[PackageInfo], skipDeps: bool, noconfirm: bool, trunkPath: bool):
+  tuple[buildResult: Option[BuildResult], code: int, skipped: bool] =
   let base = pkgInfos[0].rpc.base
   var repoPath = repoPath(config.tmpRootInitial, base)
   let gitSubdir = pkgInfos[0].rpc.gitSubdir
 
-  proc loop(noextract: bool, showEditLoop: bool): (Option[BuildResult], int) =
+  proc loop(noextract: bool, showEditLoop: bool): tuple[buildResult: Option[BuildResult],
+    code: int, skipped: bool] =
     let res = if showEditLoop and not noconfirm:
         editLoop(config, pkgInfos[0].rpc.repo, base, repoPath, gitSubdir, false, noconfirm, trunkPath)
       else:
         'n'
 
     if res == 'a':
-      (none(BuildResult), 1)
+      (none(BuildResult), 1, false)
     else:
       let (buildResult, code, interrupted) = buildLoop(config, pkgInfos,
         skipDeps, noconfirm, noextract)
 
       if interrupted:
-        (buildResult, 1)
+        (buildResult, 1, false)
       elif code != 0:
-        let res = printColonUserChoiceWithHelp(config.color, tr"Build failed, retry?",
-          choices('y', ('e', tr"retry with --noextract option"), 'n'), 'n', noconfirm, 'n')
+        let res = printColonUserChoiceWithHelp(config.color,
+          tr"Build failed. Retry, skip this package, or abort?",
+          choices('y', ('e', tr"retry with --noextract option"),
+            ('s', tr"skip this package"), ('a', tr"abort operation")),
+          's', noconfirm, 's')
 
         if res == 'e':
           loop(true, true)
         elif res == 'y':
           loop(false, true)
+        elif res == 's':
+          printWarning(config.color, tr"skipping package '$#'" % [base])
+          (none(BuildResult), 0, true)
         else:
-          (buildResult, code)
+          (buildResult, code, false)
       else:
-        (buildResult, code)
+        (buildResult, code, false)
 
   if trunkPath == true:
     repoPath.add("/trunk")
@@ -576,7 +584,7 @@ proc buildFromSources(config: Config, commonArgs: seq[Argument],
       0
 
   if preBuildCode != 0:
-    (none(BuildResult), preBuildCode)
+    (none(BuildResult), preBuildCode, false)
   else:
     loop(false, false)
 
@@ -597,11 +605,13 @@ proc installGroupFromSources(config: Config, commonArgs: seq[Argument],
         trunkPath = true
       else:
         trunkPath = false
-      let (buildResult, code) = buildFromSources(config, commonArgs,
+      let (buildResult, code, skipped) = buildFromSources(config, commonArgs,
         basePackages[index], skipDeps, noconfirm, trunkPath)
 
       if code != 0:
         (buildResults.reversed, code)
+      elif skipped:
+        buildNext(index + 1, buildResults)
       else:
         buildNext(index + 1, buildResult.unsafeGet ^& buildResults)
     else:
@@ -624,6 +634,11 @@ proc installGroupFromSources(config: Config, commonArgs: seq[Argument],
         for x in filesTable.opt(i.rpc.name):
           (name:i.rpc.name,file:x)
 
+  var builtBases = initHashSet[string]()
+  for br in buildResults:
+    for r in br.replacePkgInfos:
+      builtBases.incl(r.pkgInfo.rpc.base)
+
   proc cleanupBuiltArtifacts(clear: bool) =
     let installFiles = install.map(p => p.file)
     for pair in allFiles:
@@ -643,6 +658,9 @@ proc installGroupFromSources(config: Config, commonArgs: seq[Argument],
       discard chmod(cstring(config.tmpRootInitial & "/" & lastBase & "/pkg"), 0o0755)
     cleanupBuiltArtifacts(true)
     (installedAs: newSeq[(string, string)](), code: buildCode, keepBuiltArtifacts: false)
+  elif install.len == 0:
+    cleanupBuiltArtifacts(false)
+    (installedAs: newSeq[(string, string)](), code: 0, keepBuiltArtifacts: false)
   else:
     if currentUser.uid != 0 and printColonUserChoice(config.color,
       tr"Continue installing?", ['y', 'n'], 'y', 'n',
@@ -705,7 +723,7 @@ proc installGroupFromSources(config: Config, commonArgs: seq[Argument],
         let cachePath = config.userCacheInitial.cache(CacheKind.repositories)
         for pkgInfos in basePackages:
           let repo = pkgInfos[0].rpc.repo
-          if repo == config.aurRepo:
+          if repo == config.aurRepo and pkgInfos[0].rpc.base in builtBases:
             let base = pkgInfos[0].rpc.base
             let fullName = bareFullName(BareKind.pkg, base)
             let bareRepoPath = repoPath(cachePath, fullName)
