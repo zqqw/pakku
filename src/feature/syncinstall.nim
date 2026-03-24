@@ -423,11 +423,11 @@ proc buildLoop(config: Config, pkgInfos: seq[PackageInfo], skipDeps: bool,
   if contains(pkgInfos[0].rpc.gitUrl, "https://github.com/archlinux/") or pkgInfos[0].rpc.gitUrl == "https://gitea.artixlinux.org/packages":
     buildPath = buildPath & "trunk/"
 
-  let confFileEnv = getEnv("MAKEPKG_CONF")
-  let confFile = if confFileEnv.len == 0:
-      SysConfDir & "/makepkg.conf"
-    else:
-      confFileEnv
+  let (confFileOpt, confError) = resolveMakepkgConf()
+  if confFileOpt.isNone and confError.len > 0:
+    printError(config.color, confError)
+    return (none(BuildResult), 1, false)
+  let confFile = confFileOpt.unsafeGet.string
 
   let workConfFile = config.tmpRootInitial & "/makepkg.conf"
 

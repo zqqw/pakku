@@ -3,6 +3,7 @@ import
     hashes,
     options,
     os,
+    paths,
     posix,
     sequtils,
     strutils,
@@ -387,6 +388,17 @@ proc dropPrivileges*(): bool =
 proc checkExec(file: string): bool =
   var statv: Stat
   stat(file, statv) == 0 and (statv.st_mode.cint and S_IXUSR) == S_IXUSR
+
+proc getUserConfigDir*(): Option[Path] =
+  let xdgConfigHome = getEnv("XDG_CONFIG_HOME")
+  if xdgConfigHome.len > 0:
+    some(Path(xdgConfigHome))
+  else:
+    let homeDir = getEnv("HOME")
+    if homeDir.len > 0:
+      some(Path(homeDir / ".config"))
+    else:
+      none(Path)
 
 proc getSudoPrefix*(preferred: Option[string]): seq[string] =
   ## Get the prefix to be used for escalated priviliges. The search order is

@@ -1,5 +1,7 @@
 import
-  options, os, osproc, posix, sequtils, sets, strutils, sugar, tables,
+  std/[options, os, osproc, posix, sequtils, sets, strutils, sugar, tables,
+    paths, files
+  ],
   args, config, format, lists, package, pacman, utils,
   "wrapper/alpm"
 when not declared(system.stdout): import std/syncio
@@ -63,6 +65,31 @@ proc checkAndRefreshUpgradeInternal(
     (code, callArgs)
   else:
     (0, args)
+
+proc resolveMakepkgConf*(): tuple[path: Option[Path], error: string] =
+  let envConf = getEnv("MAKEPKG_CONF")
+  if envConf.len > 0:
+    if fileExists(envConf):
+      return (some(Path(envConf)), "")
+    else:
+      return (none(Path), tr"MAKEPKG_CONF points to missing file '$#'" % [envConf])
+
+  let homeDir = getEnv("HOME")
+  let userConfigDir = getUserConfigDir()
+
+  var candidates = newSeq[Path]()
+  if userConfigDir.isSome:
+    candidates.add userConfigDir.unsafeGet / Path("pacman") / Path("makepkg.conf")
+  if homeDir.len > 0:
+    candidates.add Path(homeDir / ".makepkg.conf")
+  candidates.add Path(SysConfDir / "makepkg.conf")
+
+  for path in candidates:
+    if fileExists(path):
+      # TODO: Merge makepkg.conf drop-ins here when pakku starts honoring them.
+      return (some(path), "")
+
+  (none(Path), tr"failed to find makepkg config file")
 
 template checkAndRefreshUpgrade*(sudoPrefix: seq[string], color: bool, args: seq[Argument]):
   tuple[code: int, args: seq[Argument]] =
