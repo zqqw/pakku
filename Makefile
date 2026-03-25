@@ -53,6 +53,7 @@ endif
 NIM_CACHE_DIR = nimcache
 
 NIM_OPTIONS = \
+	-d:release \
 	-d:pakkuVersion="${RVERSION}" \
 	-d:pakkuPrefix="${PREFIX}"
 

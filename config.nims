@@ -3,8 +3,6 @@ const
   Prefix        = "/usr/local"
   SysConfDir    = "/etc"
   LocalStateDir = "/var"
-  BuildTarget   = "release"
-  BuildOptimize = "size"
   Copyright     = """2018-2019 kitsunyan
 2020-2023 zqqw"""
 
@@ -16,11 +14,10 @@ switch("define", "pakkuCopyright=" & Copyright)
 
 --mm:arc
 --threads:off
---define:buildTarget
 #--define:nimPreviewSlimSystem
 
 when defined(release):
-  switch("opt", BuildOptimize)
+  --opt:"size"
   --passL:"-s"
   --passC:"-s"
   --passL:"-flto"
