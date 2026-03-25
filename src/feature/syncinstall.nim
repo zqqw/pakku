@@ -525,37 +525,45 @@ proc buildLoop(config: Config, pkgInfos: seq[PackageInfo], skipDeps: bool,
         (some(($confExt, targetPkgInfos & additionalPkgInfos)), 0, false)
 
 proc buildFromSources(config: Config, commonArgs: seq[Argument],
-  pkgInfos: seq[PackageInfo], skipDeps: bool, noconfirm: bool, trunkPath: bool): (Option[BuildResult], int) =
+  pkgInfos: seq[PackageInfo], skipDeps: bool, noconfirm: bool, trunkPath: bool):
+  tuple[buildResult: Option[BuildResult], code: int, skipped: bool] =
   let base = pkgInfos[0].rpc.base
   var repoPath = repoPath(config.tmpRootInitial, base)
   let gitSubdir = pkgInfos[0].rpc.gitSubdir
 
-  proc loop(noextract: bool, showEditLoop: bool): (Option[BuildResult], int) =
+  proc loop(noextract: bool, showEditLoop: bool): tuple[buildResult: Option[BuildResult],
+    code: int, skipped: bool] =
     let res = if showEditLoop and not noconfirm:
         editLoop(config, pkgInfos[0].rpc.repo, base, repoPath, gitSubdir, false, noconfirm, trunkPath)
       else:
         'n'
 
     if res == 'a':
-      (none(BuildResult), 1)
+      (none(BuildResult), 1, false)
     else:
       let (buildResult, code, interrupted) = buildLoop(config, pkgInfos,
         skipDeps, noconfirm, noextract)
 
       if interrupted:
-        (buildResult, 1)
+        (buildResult, 1, false)
       elif code != 0:
-        let res = printColonUserChoiceWithHelp(config.color, tr"Build failed, retry?",
-          choices('y', ('e', tr"retry with --noextract option"), 'n'), 'n', noconfirm, 'n')
+        let res = printColonUserChoiceWithHelp(config.color,
+          tr"Build failed. Retry, skip this package, or abort?",
+          choices('y', ('e', tr"retry with --noextract option"),
+            ('s', tr"skip this package"), ('a', tr"abort operation")),
+          's', noconfirm, 's')
 
         if res == 'e':
           loop(true, true)
         elif res == 'y':
           loop(false, true)
+        elif res == 's':
+          printWarning(config.color, tr"skipping package '$#'" % [base])
+          (none(BuildResult), 0, true)
         else:
-          (buildResult, code)
+          (buildResult, code, false)
       else:
-        (buildResult, code)
+        (buildResult, code, false)
 
   if trunkPath == true:
     repoPath.add("/trunk")
@@ -576,7 +584,7 @@ proc buildFromSources(config: Config, commonArgs: seq[Argument],
       0
 
   if preBuildCode != 0:
-    (none(BuildResult), preBuildCode)
+    (none(BuildResult), preBuildCode, false)
   else:
     loop(false, false)
 
@@ -597,11 +605,13 @@ proc installGroupFromSources(config: Config, commonArgs: seq[Argument],
         trunkPath = true
       else:
         trunkPath = false
-      let (buildResult, code) = buildFromSources(config, commonArgs,
+      let (buildResult, code, skipped) = buildFromSources(config, commonArgs,
         basePackages[index], skipDeps, noconfirm, trunkPath)
 
       if code != 0:
         (buildResults.reversed, code)
+      elif skipped:
+        buildNext(index + 1, buildResults)
       else:
         buildNext(index + 1, buildResult.unsafeGet ^& buildResults)
     else:
@@ -624,6 +634,11 @@ proc installGroupFromSources(config: Config, commonArgs: seq[Argument],
         for x in filesTable.opt(i.rpc.name):
           (name:i.rpc.name,file:x)
 
+  var builtBases = initHashSet[string]()
+  for br in buildResults:
+    for r in br.replacePkgInfos:
+      builtBases.incl(r.pkgInfo.rpc.base)
+
   proc cleanupBuiltArtifacts(clear: bool) =
     let installFiles = install.map(p => p.file)
     for pair in allFiles:
@@ -643,6 +658,9 @@ proc installGroupFromSources(config: Config, commonArgs: seq[Argument],
       discard chmod(cstring(config.tmpRootInitial & "/" & lastBase & "/pkg"), 0o0755)
     cleanupBuiltArtifacts(true)
     (installedAs: newSeq[(string, string)](), code: buildCode, keepBuiltArtifacts: false)
+  elif install.len == 0:
+    cleanupBuiltArtifacts(false)
+    (installedAs: newSeq[(string, string)](), code: 0, keepBuiltArtifacts: false)
   else:
     if currentUser.uid != 0 and printColonUserChoice(config.color,
       tr"Continue installing?", ['y', 'n'], 'y', 'n',
@@ -705,7 +723,7 @@ proc installGroupFromSources(config: Config, commonArgs: seq[Argument],
         let cachePath = config.userCacheInitial.cache(CacheKind.repositories)
         for pkgInfos in basePackages:
           let repo = pkgInfos[0].rpc.repo
-          if repo == config.aurRepo:
+          if repo == config.aurRepo and pkgInfos[0].rpc.base in builtBases:
             let base = pkgInfos[0].rpc.base
             let fullName = bareFullName(BareKind.pkg, base)
             let bareRepoPath = repoPath(cachePath, fullName)
@@ -1053,31 +1071,53 @@ proc obtainAurPackageInfos(config: Config, rpcInfos: seq[RpcPackageInfo],
     let reference = i.toPackageReference
     rpcAurTargets.filter(f => f.sync.target.reference.isProvidedBy(reference, true)).len == 0))
 
-  let upgradeStructs: seq[tuple[rpcInfo: RpcPackageInfo, needed: bool,
-    localIsNewer: Option[LocalIsNewer]]] = installedUpgradeRpcInfos
-    .map(i => (block:
-      let res = installed.checkNeeded(i.name, i.version, upgradeCount >= 2)
-      let (newNeeded, localIsNewer) = if i.name.isVcs:
-          # Don't warn about newer local git packages and don't downgrade them
-          (installed.checkNeeded(i.name, i.version, false).needed, none(LocalIsNewer))
-        elif not res.needed and res.vercmp < 0:
-          (res.needed, some((i.name, installed[i.name].version, i.version)))
+  type Upgrade = tuple[
+      rpcInfo: RpcPackageInfo,
+      needed: bool,
+      localIsNewer: Option[LocalIsNewer]
+    ]
+  let upgradeStructs: seq[Upgrade] = installedUpgradeRpcInfos.mapIt:
+    let res = installed.checkNeeded(it.name, it.version, upgradeCount >= 2)
+    let (newNeeded, localIsNewer) =
+      if it.name.isVcs:
+        # Don't warn about newer local git packages and don't downgrade them
+        (installed.checkNeeded(it.name, it.version, false).needed, none(LocalIsNewer))
+      elif not res.needed and res.vercmp < 0:
+        (res.needed, some((it.name, installed[it.name].version, it.version)))
+      else:
+        (res.needed, none(LocalIsNewer))
+    (it, newNeeded, localIsNewer)
+
+  let (reqUpgrades, ignoredUpgrades) = block:
+    var selectable, ignored: seq[Upgrade]
+    for u in upgradeStructs:
+      if u.needed:
+        if config.ignored(u.rpcInfo.name, installed[u.rpcInfo.name].groups):
+          ignored.add u
         else:
-          (res.needed, none(LocalIsNewer))
-      (i, newNeeded, localIsNewer)))
+          selectable.add u
+    (selectable, ignored)
 
-  let selectedUpgradeRpcInfos = if printMode or noconfirm: (block:
-      upgradeStructs.filter(p => p.needed).map(p => p.rpcInfo))
-    else: (block:
-      let neededUpgradeStructs = upgradeStructs.filter(p => p.needed)
+  for upgrade in ignoredUpgrades:
+    let installedVersion = installed[upgrade.rpcInfo.name].version
+    let newVersion = upgrade.rpcInfo.version
+    let warnStr = if vercmp(newVersion.cstring, installedVersion.cstring) < 0:
+        tra("%s: ignoring package downgrade (%s => %s)\n")
+      else:
+        tra("%s: ignoring package upgrade (%s => %s)\n")
+    printWarning(config.color, warnStr %
+      [upgrade.rpcInfo.name, installedVersion, newVersion])
 
-      if neededUpgradeStructs.len == 0:
-        @[]
+  let selectedUpgradeRpcInfos =
+    if printMode or noconfirm:
+      reqUpgrades.mapIt(it.rpcInfo)
+    else:
+      if reqUpgrades.len == 0: @[]
       else:
         printColon(config.color, tr"Available AUR upgrades")
         echo()
-        let numberWidth = max(($neededUpgradeStructs.len).len, 2)
-        for index, upgrade in neededUpgradeStructs:
+        let numberWidth = max(($reqUpgrades.len).len, 2)
+        for index, upgrade in reqUpgrades:
           let installedVersion = installed[upgrade.rpcInfo.name].version
           let number = align($(index + 1), numberWidth, ' ')
           echo(number, ") ", config.aurRepo, "/", upgrade.rpcInfo.name,
@@ -1088,17 +1128,17 @@ proc obtainAurPackageInfos(config: Config, rpcInfos: seq[RpcPackageInfo],
           while true:
             let input = printColonUserInput(config.color,
               tr"Packages to skip (syntax: 1, 3-5, 7 11)" & ":", noconfirm, "", "")
-            let intervalsOpt = parseNumberIntervals(input, neededUpgradeStructs.len)
+            let intervalsOpt = parseNumberIntervals(input, reqUpgrades.len)
             if intervalsOpt.isSome:
               let intervals = intervalsOpt.unsafeGet
               return block:
                 var filtered: seq[RpcPackageInfo]
-                for idx, i in neededUpgradeStructs:
+                for idx, i in reqUpgrades:
                   if not intervals.anyIt(idx + 1 in it):
                     filtered.add i.rpcInfo
                 filtered
             printError(config.color, tr"invalid package selection")
-        inputLoop())
+        inputLoop()
 
   let targetRpcInfos = targetRpcInfoPairs
     .filter(i => not needed or i.upgradeable).map(i => i.rpcInfo)
