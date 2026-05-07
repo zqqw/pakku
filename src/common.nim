@@ -91,6 +91,24 @@ proc resolveMakepkgConf*(): tuple[path: Option[Path], error: string] =
 
   (none(Path), tr"failed to find makepkg config file")
 
+proc resolveEffectivePkgdest*(confFile: string): string =
+  ## Sources the resolved makepkg.conf to read the effective PKGDEST value
+  ## without pakku's override block. Returns "" if PKGDEST is unset (makepkg
+  ## default: write alongside the PKGBUILD). Environment variable PKGDEST takes
+  ## precedence over the conf file.
+  let envDest = getEnv("PKGDEST")
+  if envDest.len > 0:
+    return envDest
+
+  forkWaitRedirect(() => (block:
+    if dropPrivRedirect():
+      execRedirect(bashCmd, "-c",
+        "source \"$@\" && echo \"$PKGDEST\"",
+        "bash", confFile)
+    else:
+      quit(1)))
+    .output.optFirst.get("")
+
 template checkAndRefreshUpgrade*(sudoPrefix: seq[string], color: bool, args: seq[Argument]):
   tuple[code: int, args: seq[Argument]] =
   checkAndRefreshUpgradeInternal(sudoPrefix, color, true, args)
