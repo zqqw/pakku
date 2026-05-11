@@ -37,30 +37,37 @@ type
   BuildResult = object
     artifacts: seq[BuildArtifact]
 
-  ArtifactFile = object
-    ## A built package archive and its optional install-relevance name.
-    name: Option[string]
-    file: string
-
   InstallTarget = object
     ## A package-to-archive mapping selected for installation.
     name: string
     file: string
 
+  InstallItem = object
+    ## Packages to install via the positional subprocess protocol.
+    ## Field order must stay in sync with the install helper.
+    name: string
+    file: string
+    mode: string
+
   BuildBasesRes = object
     results: seq[BuildResult]
+    skipped: int
     code: int
 
   InstallArtifacts = object
-    allFiles: seq[ArtifactFile]
+    artifacts: seq[BuildArtifact] ## all built archives including split-package siblings
     install: seq[InstallTarget]
-    installFiles: HashSet[string] ## file paths of install targets, precomputed for cleanup lookup
+    installFiles: HashSet[string] ## file paths of install targets; precomputed for O(1) cleanup lookup
     builtBases: HashSet[string]
+    renames: CanonicalRenames
+
+  CanonicalRenames = Table[string, string]
+    ## Maps artifact names to canonical AUR names for split packages.
+    ## Only populated for actual renames (artifact.name != rpc.name).
 
   InstallGroupRes = object
-    installedAs: seq[(string, string)]
+    canonicalRenames: CanonicalRenames
     code: int
-    keepWorktrees: bool
 
   CleanupSpec = object
     ## Post-install cleanup settings. Computed once from
@@ -471,13 +478,31 @@ func cleanupSpec(policy: CleanupPolicy; archivesOutsideTmp: bool): CleanupSpec =
   of CleanupPolicy.none:
     CleanupSpec(removeWorktrees: false, removeArchives: false, nukeTmpPrefix: false)
 
+type FailureKind = enum
+  buildFailure
+  installFailure
+
+func cleanupSpecForFailure(kind: FailureKind; config: Config;
+    archivesOutsideTmp: bool): CleanupSpec =
+  case kind
+  of buildFailure:
+    CleanupSpec(
+      removeWorktrees: not config.keepBuildDirOnFailure,
+      removeArchives: not config.keepBuiltPackagesOnFailure,
+      nukeTmpPrefix: not config.keepBuildDirOnFailure and archivesOutsideTmp)
+  of installFailure:
+    CleanupSpec(
+      removeWorktrees: false,
+      removeArchives: false,
+      nukeTmpPrefix: false)
+
 proc cleanupArtifacts(config: Config; artifacts: InstallArtifacts;
     savedTo: string; spec: CleanupSpec) =
   ## Removes or retains built package archives according to spec.
   ## Non-install-target files (e.g. split-package siblings) are always removed.
-  for af in artifacts.allFiles:
-    if spec.removeArchives or af.file notin artifacts.installFiles:
-      try: removeFile(af.file)
+  for a in artifacts.artifacts:
+    if spec.removeArchives or a.file notin artifacts.installFiles:
+      try: removeFile(a.file)
       except CatchableError: discard
   if not spec.removeArchives and savedTo.len > 0:
     printWarning(config.color, tr"packages are saved to '$#'" % [savedTo])
@@ -1029,6 +1054,7 @@ proc buildAllBases(config: Config; commonArgs: seq[Argument];
   ## Build or skip each base in dependency order. On build failure, chmods the
   ## pkg directory and returns early.
   var results: seq[BuildResult]
+  var skippedCount = 0
   for index in 0 ..< basePackages.len:
     requireNonEmpty(basePackages[index], "buildAllBases")
     let baseName = basePackages[index][0].rpc.base
@@ -1042,27 +1068,31 @@ proc buildAllBases(config: Config; commonArgs: seq[Argument];
     let (buildResult, code, skipped) = buildFromSources(
       config, basePackages[index], skipDeps, noconfirm, isTrunkPath, confFile)
     if skipped:
+      inc skippedCount
       continue
     if code != 0:
       let path = config.tmpRootInitial / baseName / (if isTrunkPath: "trunk/pkg" else: "pkg")
       discard chmod(cstring(path), 0o0755)
-      return BuildBasesRes(results: results, code: code)
+      return BuildBasesRes(results: results, skipped: skippedCount, code: code)
     results.add buildResult.unsafeGet
 
-  BuildBasesRes(results: results, code: 0)
+  assert results.len + skippedCount == basePackages.len,
+    "results + skipped != incoming base count"
+  BuildBasesRes(results: results, skipped: skippedCount, code: 0)
 
 func prepareArtifacts(buildResults: openArray[BuildResult];
     basePackages: openArray[seq[PackageInfo]]): InstallArtifacts =
   ## Collect built artifacts into install targets and track built bases.
   ## installFiles is precomputed here so cleanup never rebuilds it per-call.
-  let allFiles = collect(newSeq):
-    for br in buildResults:
-      for artifact in br.artifacts:
-        ArtifactFile(name: artifact.name, file: artifact.file)
+  var artifacts: seq[BuildArtifact]
+  for br in buildResults:
+    for artifact in br.artifacts:
+      artifacts.add artifact
+
   let filesTable = block:
     var table = initTable[string, string]()
-    for af in allFiles:
-      if af.name.isSome: table[af.name.unsafeGet] = af.file
+    for a in artifacts:
+      if a.name.isSome: table[a.name.unsafeGet] = a.file
     table
   let install = collect(newSeq):
     for g in basePackages:
@@ -1074,11 +1104,19 @@ func prepareArtifacts(buildResults: openArray[BuildResult];
     for t in install: s.incl t.file
     s
   var builtBases = initHashSet[string]()
-  for br in buildResults:
-    for artifact in br.artifacts:
-      builtBases.incl(artifact.pkgInfo.rpc.base)
-  InstallArtifacts(allFiles: allFiles, install: install,
-    installFiles: installFiles, builtBases: builtBases)
+  var renames: CanonicalRenames
+  for a in artifacts:
+    builtBases.incl a.pkgInfo.rpc.base
+    if a.name.isSome:
+      let aname = a.name.unsafeGet
+      if aname != a.pkgInfo.rpc.name:
+        assert aname notin renames, "duplicate canonicalization key"
+        renames[aname] = a.pkgInfo.rpc.name
+
+  assert installFiles.len == install.len, "mismatched install targets vs files"
+  assert install.len <= artifacts.len, "more install targets than artifacts"
+  InstallArtifacts(artifacts: artifacts, install: install,
+    installFiles: installFiles, builtBases: builtBases, renames: renames)
 
 proc tagBuiltBases(config: Config; basePackages: openArray[seq[PackageInfo]];
     builtBases: HashSet[string]) =
@@ -1108,35 +1146,37 @@ proc installGroupFromSources(config: Config; commonArgs: seq[Argument];
     else: config.tmpRootInitial
 
   let successSpec = cleanupSpec(config.cleanupAfterInstall, archivesOutsideTmp)
-  let failureSpec = CleanupSpec(
-    removeWorktrees: not config.keepBuildDirOnFailure,
-    removeArchives: not config.keepBuiltPackagesOnFailure,
-    nukeTmpPrefix: not config.keepBuildDirOnFailure and archivesOutsideTmp)
+  let failureSpec = cleanupSpecForFailure(buildFailure, config, archivesOutsideTmp)
 
   let build = buildAllBases(config, commonArgs, basePackages, skipDeps,
     noconfirm, confFile, savedTo, effectivePkgdest)
   let artifacts = prepareArtifacts(build.results, basePackages)
+  assert build.results.len + build.skipped <= basePackages.len
+  assert build.code == 0 or build.results.len + build.skipped < basePackages.len,
+    "incomplete results expected when build failed"
 
   if build.code != 0:
     cleanupArtifacts(config, artifacts, savedTo, failureSpec)
-    return InstallGroupRes(code: build.code,
-      keepWorktrees: not failureSpec.removeWorktrees)
+    return InstallGroupRes(code: build.code)
 
   if artifacts.install.len == 0:
+    assert build.code == 0
+    assert build.results.len == 0, "build produced no install targets"
     cleanupArtifacts(config, artifacts, savedTo, successSpec)
-    return InstallGroupRes(keepWorktrees: not successSpec.removeWorktrees)
+    return InstallGroupRes(code: 0)
 
   if currentUser.uid != 0 and printColonUserChoice(config.color,
       tr"Continue installing?", ['y', 'n'], 'y', 'n', noconfirm, 'y') != 'y':
     cleanupArtifacts(config, artifacts, savedTo, successSpec)
-    return InstallGroupRes(code: 1, keepWorktrees: not successSpec.removeWorktrees)
+    return InstallGroupRes(code: 1)
 
   let installWithReason = withAlpmConfig(config, false, handle, dbs, errors):
     let local = handle.local
-    artifacts.install.mapIt:
-      (name: it.name,
-       file: it.file,
-       mode: $resolveInstallMode(it.name, it.name in explicits, local))
+    collect(newSeq):
+      for it in artifacts.install:
+        InstallItem(name: it.name,
+          file: it.file,
+          mode: $resolveInstallMode(it.name, it.name in explicits, local))
 
   let (cacheDir, cacheUser, cacheGroup) =
     if config.preserveBuilt == PreserveBuilt.internal:
@@ -1157,6 +1197,10 @@ proc installGroupFromSources(config: Config; commonArgs: seq[Argument];
   let pacmanDatabaseParams = pacmanCmd & pacmanParams(config.color,
     commonArgs.keepOnlyOptions(commonOptions) & ("D", none(string), ArgumentType.short))
 
+  assert pacmanUpgradeParams.len > 0 and pacmanDatabaseParams.len > 0,
+    "install helper protocol requires non-empty pacman command vectors"
+  assert installWithReason.len > 0
+
   let installParams = block:
     var p = config.sudoCommand
     p.add helperToolCommand("install")
@@ -1171,21 +1215,14 @@ proc installGroupFromSources(config: Config; commonArgs: seq[Argument];
   let code = forkWait(() => execResult(installParams))
   if code != 0:
     # Pacman failed: preserve artifacts so the user can inspect or retry.
-    cleanupArtifacts(config, artifacts, savedTo,
-      CleanupSpec(removeWorktrees: false, removeArchives: false, nukeTmpPrefix: false))
-    return InstallGroupRes(code: code, keepWorktrees: true)
+    let installFailureSpec = cleanupSpecForFailure(installFailure, config, archivesOutsideTmp)
+    cleanupArtifacts(config, artifacts, savedTo, installFailureSpec)
+    return InstallGroupRes(code: code)
 
   tagBuiltBases(config, basePackages, artifacts.builtBases)
   cleanupArtifacts(config, artifacts, savedTo, successSpec)
 
-  let installedAs = collect(newSeq):
-    for br in build.results:
-      for artifact in br.artifacts:
-        if artifact.name.isSome:
-          (artifact.name.unsafeGet, artifact.pkgInfo.rpc.name)
-
-  InstallGroupRes(installedAs: installedAs,
-    keepWorktrees: not successSpec.removeWorktrees)
+  InstallGroupRes(canonicalRenames: artifacts.renames, code: 0)
 
 proc deduplicatePkgInfos(pkgInfos: seq[PackageInfo];
     config: Config; warnOnDup: bool): seq[PackageInfo] =
@@ -1788,33 +1825,44 @@ proc handleInstall(args: seq[Argument]; config: Config;
   let confFile = confFileOpt.unsafeGet.string
   let effectivePkgdest = resolveEffectivePkgdest(confFile)
 
-  var installedAsPairs: seq[(string, string)]
+  var canonicalRenames = initTable[string, string]()
   var code = 0
   var lastIndex = -1
-  var keepWorktrees = false
 
   for index in 0 ..< basePackages.len:
     let installResult = installGroupFromSources(config, commonArgs,
       basePackages[index], explicits, skipDeps, noconfirm, confFile, effectivePkgdest)
-    installedAsPairs &= installResult.installedAs
-    code = installResult.code
-    keepWorktrees = installResult.keepWorktrees
+    if installResult.code != 0:
+      code = installResult.code
+      lastIndex = index
+      break
+    for k, v in installResult.canonicalRenames: canonicalRenames[k] = v
     lastIndex = index
-    if code != 0: break
-
-  let installedAs = installedAsPairs.toTable
 
   if code != 0 and lastIndex < basePackages.len - 1:
     printWarning(config.color, tr"installation aborted")
 
-  let postSpec = cleanupSpec(config.cleanupAfterInstall, archivesOutsideTmp)
-  clearWorktrees(config, paths,
-    CleanupSpec(removeWorktrees: not keepWorktrees,
-      removeArchives: postSpec.removeArchives,
-      nukeTmpPrefix: not keepWorktrees and postSpec.nukeTmpPrefix))
+  # Worktree cleanup policy derived directly from config.
+  # Archives are already handled per-group inside installGroupFromSources.
+  let successSpec = cleanupSpec(config.cleanupAfterInstall, archivesOutsideTmp)
+  let failureSpec = CleanupSpec(
+    removeWorktrees: not config.keepBuildDirOnFailure,
+    removeArchives: false,
+    nukeTmpPrefix: not config.keepBuildDirOnFailure and archivesOutsideTmp)
 
-  let newKeepNames = collect(initHashSet):
-    for n in keepNames: {installedAs.opt(n).get(n)}
+  let spec = if code == 0: successSpec else: failureSpec
+  clearWorktrees(config, paths,
+    CleanupSpec(removeWorktrees: spec.removeWorktrees,
+      removeArchives: false,
+      nukeTmpPrefix: spec.nukeTmpPrefix))
+
+  let newKeepNames = block:
+    var keep = initHashSet[string]()
+    for n in keepNames:
+      keep.incl canonicalRenames.getOrDefault(n, n)
+    keep
+
+
 
   let (_, finalUnrequired, finalUnrequiredWithoutOptional, _) =
     withAlpmConfig(config, false, handle, dbs, errors):
