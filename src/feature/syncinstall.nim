@@ -583,7 +583,9 @@ proc exec(color: bool;
     else: execResult(argv), cwd, mode, dropPrivs)
 
 func pkgArch(config: Config; pkgInfo: PackageInfo): string =
-  if "any" in pkgInfo.archs: "any" else: config.common.arch
+  ## `parseSrcInfo` omits `any` from archs, leaving an empty list for noarch
+  ## packages.
+  if pkgInfo.archs.len == 0: "any" else: config.common.arch
 
 func pkgFileName(pkgInfo: PackageInfo; arch: string): string =
   pkgInfo.rpc.name & "-" & pkgInfo.rpc.version & "-" & arch
@@ -594,7 +596,12 @@ func artifactStem(config: Config; pkgInfo: PackageInfo): string =
 func artifactStemFromFilename(filename, extGlob: string): Option[string] =
   if extGlob == PkgExtGlob:
     let idx = filename.find(".pkg.tar.")
-    if idx > 0: some(filename[0 ..< idx]) else: none(string)
+    let suffixStart = idx + ".pkg.tar.".len
+    if idx > 0 and suffixStart < filename.len and
+        '.' notin filename[suffixStart .. ^1]:
+      some(filename[0 ..< idx])
+    else:
+      none(string)
   elif filename.endsWith(extGlob):
     some(filename[0 ..< filename.len - extGlob.len])
   else:

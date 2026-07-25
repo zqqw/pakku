@@ -85,8 +85,10 @@ Options
 	Controls cleanup of build artifacts and workspace after a successful
 	install. Full (the default) removes both temporary build directories
 	and built package archives. Worktree removes build directories but
-	preserves built packages in the output directory for reuse on
-	subsequent runs. None preserves everything.
+	preserves package archives selected for installation in the output
+	directory for reuse on subsequent runs. None preserves the workspace and
+	selected package archives. Unselected split-package sibling archives are
+	removed in Worktree and None modes.
 
 *PreBuildCommand =* command::
 	This command will be executed in package directory before building,
