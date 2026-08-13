@@ -24,6 +24,13 @@ Options
 	Set the temporary directory in which pakku will perform all
 	building operations. The default value is +/tmp/pakku-$\{USER\}+.
 
+*PackageOutputDir =* path/to/package/output/dir::
+	Built package archives (\fB*.pkg.tar*\fP) are written to this
+	directory, separating package output from the transient build
+	workspace in +TmpDir+. Supports the same variable expansion as
+	+TmpDir+ (+\fB${USER}\fP+, +\fB${HOME}\fP+, +\fB${UID}\fP+,
+	+\fB$$\fP+). Defaults to +TmpDir+ when unset or empty.
+
 *AurRepo =* name::
 	Set the fake AUR repository name. This name should not conflict with
 	names of declared repositories. The default value is +aur+.
@@ -56,10 +63,32 @@ Options
 	content of PKGBUILD and other files. Pressing enter key will give the
 	positive answer unless this option is specified.
 
-*PreserveBuilt =* Internal | User | Disabled::
-	If set to Internal, built packages will be copied to pacman cache dir.
-	If set to User, built packages will be copied to UserCacheDir.
-	If set to Disabled (the default), built packages will not be preserved.
+*KeepBuildDirOnFailure*::
+	When enabled, pakku preserves the build workspace (cloned repositories
+	and build directories) when a build fails. By default the workspace is
+	removed on failure.
+
+*KeepBuiltPackagesOnFailure*::
+	When enabled, pakku preserves built package archives in the staging
+	directory when a build fails. By default archives are removed on
+	build failure.
+
+*PreserveBuilt =* Internal | User | Pkgdest | Disabled::
+	Where to copy built packages before invoking pacman. If set to
+	Internal, packages are copied to the pacman cache directory. If set
+	to User, packages are copied to +UserCacheDir+. If set to Pkgdest,
+	packages are copied to the PKGDEST configured in the user's
+	linkman:makepkg.conf[5]. If set to Disabled (the default), no copy
+	is performed.
+
+*CleanupAfterInstall =* Full | Worktree | None::
+	Controls cleanup of build artifacts and workspace after a successful
+	install. Full (the default) removes both temporary build directories
+	and built package archives. Worktree removes build directories but
+	preserves package archives selected for installation in the output
+	directory for reuse on subsequent runs. None preserves the workspace and
+	selected package archives. Unselected split-package sibling archives are
+	removed in Worktree and None modes.
 
 *PreBuildCommand =* command::
 	This command will be executed in package directory before building,

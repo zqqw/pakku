@@ -12,54 +12,61 @@ type
   PreserveBuilt* {.pure.} = enum
     internal = "Internal",
     user = "User",
+    pkgdest = "Pkgdest",
     disabled = "Disabled"
 
-  CommonConfig* = tuple[
-    dbs: seq[string],
-    arch: string,
-    debug: bool,
-    progressBar: bool,
-    chomp: bool,
-    verbosePkgLists: bool,
-    downloadTimeout: bool,
-    pgpKeyserver: Option[string],
-    defaultRoot: bool,
-    ignorePkgs: HashSet[string],
-    ignoreGroups: HashSet[string]
-  ]
+  CleanupPolicy* {.pure.} = enum
+    full = "Full",
+    worktree = "Worktree",
+    none = "None"
 
-  PacmanConfig* = tuple[
-    common: CommonConfig,
-    sysrootOption: Option[string],
-    rootRelOption: Option[string],
-    dbRelOption: Option[string],
-    cacheRelOption: Option[string],
-    gpgRelOption: Option[string],
-    colorMode: ColorMode
-  ]
+  CommonConfig* = object
+    dbs*: seq[string]
+    arch*: string
+    debug*: bool
+    progressBar*: bool = true
+    chomp*: bool
+    verbosePkgLists*: bool
+    downloadTimeout*: bool = true
+    pgpKeyserver*: Option[string]
+    defaultRoot*: bool
+    ignorePkgs*: HashSet[string]
+    ignoreGroups*: HashSet[string]
 
-  Config* = tuple[
-    common: CommonConfig,
-    root: string,
-    db: string,
-    cache: string,
-    userCacheInitial: string,
-    userCacheCurrent: string,
-    tmpRootInitial: string,
-    tmpRootCurrent: string,
-    color: bool,
-    aurRepo: string,
-    aurComments: bool,
-    checkIgnored: bool,
-    ignoreArch: bool,
-    printAurNotFound: bool,
-    printLocalIsNewer: bool,
-    sudoExec: bool,
-    viewNoDefault: bool,
-    preserveBuilt: PreserveBuilt,
-    preBuildCommand: Option[string],
-    sudoCommand: seq[string]
-  ]
+  PacmanConfig* = object
+    common*: CommonConfig
+    sysrootOption*: Option[string]
+    rootRelOption*: Option[string]
+    dbRelOption*: Option[string]
+    cacheRelOption*: Option[string]
+    gpgRelOption*: Option[string]
+    colorMode*: ColorMode = colorNever
+
+  Config* = object
+    common*: CommonConfig
+    root*: string
+    db*: string
+    cache*: string
+    userCacheInitial*: string
+    userCacheCurrent*: string
+    tmpRootInitial*: string
+    tmpRootCurrent*: string
+    packageOutputDir*: string
+    color*: bool
+    aurRepo*: string = "aur"
+    aurComments*: bool
+    checkIgnored*: bool
+    ignoreArch*: bool
+    printAurNotFound*: bool
+    printLocalIsNewer*: bool
+    sudoExec*: bool
+    viewNoDefault*: bool
+    keepBuildDirOnFailure*: bool
+    keepBuiltPackagesOnFailure*: bool
+    cleanupAfterInstall*: CleanupPolicy = full
+    preserveBuilt*: PreserveBuilt = disabled
+    preBuildCommand*: Option[string]
+    sudoCommand*: seq[string]
 
 proc readConfigFile*(configFile: string):
   (OrderedTable[string, ref Table[string, string]], bool) =
@@ -141,6 +148,8 @@ proc extendRel*(pathRel: string, sysroot: Option[string]): string =
   sysroot.map(s => (s & "/" & pathRel).simplifyConfigPath).get(pathRel)
 
 proc obtainConfig*(config: PacmanConfig): Config =
+  ## Builds the pakku runtime configuration by layering the pacman config with
+  ## user-specified options from the pakku.conf options section.
   let (configTable, _) = readConfigFile(SysConfDir & "/pakku.conf")
   let options = configTable.opt("options").map(t => t[]).get(initTable[string, string]())
 
@@ -169,18 +178,6 @@ proc obtainConfig*(config: PacmanConfig): Config =
     tmpRootInitial = obtainTmpDir(initialOrCurrentUser)
     tmpRootCurrent = obtainTmpDir(currentUser)
     aurRepo = options.opt("AurRepo").get("aur")
-    aurComments = options.hasKey("AurComments")
-    checkIgnored = options.hasKey("CheckIgnored")
-    ignoreArch = options.hasKey("IgnoreArch")
-    printAurNotFound = options.hasKey("PrintAurNotFound")
-    printLocalIsNewer = options.hasKey("PrintLocalIsNewer")
-    sudoExec = options.hasKey("SudoExec")
-    viewNoDefault = options.hasKey("ViewNoDefault")
-    preserveBuilt = toSeq(enumerate[PreserveBuilt]())
-      .filter(o => some($o) == options.opt("PreserveBuilt"))
-      .optLast.get(PreserveBuilt.disabled)
-    preBuildCommand = options.opt("PreBuildCommand")
-    sudoCommand = options.opt("PreferredSudoCommand").getSudoPrefix()
 
   if config.common.dbs.find(aurRepo) >= 0:
     raise commandError(tr"repo '$#' can not be used as fake AUR repository" % [aurRepo],
@@ -190,13 +187,41 @@ proc obtainConfig*(config: PacmanConfig): Config =
     raise commandError(trp("could not register '%s' database (%s)\n") %
       [aurRepo, tra"wrong or NULL argument passed"], colorNeeded = some(color))
 
-  ((config.common.dbs, config.common.arch, config.common.debug, config.common.progressBar,
-    config.common.chomp, config.common.verbosePkgLists, config.common.downloadTimeout,
-    config.common.pgpKeyserver, config.common.defaultRoot and config.sysrootOption.isNone,
-    config.common.ignorePkgs, config.common.ignoreGroups),
-    root, db, cache, userCacheInitial, userCacheCurrent, tmpRootInitial, tmpRootCurrent,
-    color, aurRepo, aurComments, checkIgnored, ignoreArch, printAurNotFound, printLocalIsNewer,
-    sudoExec, viewNoDefault, preserveBuilt, preBuildCommand, sudoCommand)
+  let common = block:
+    var c = config.common
+    c.defaultRoot = c.defaultRoot and config.sysrootOption.isNone
+    c
+
+  Config(
+    common: common,
+    root: root,
+    db: db,
+    cache: cache,
+    userCacheInitial: userCacheInitial,
+    userCacheCurrent: userCacheCurrent,
+    tmpRootInitial: tmpRootInitial,
+    tmpRootCurrent: tmpRootCurrent,
+    packageOutputDir: options.opt("PackageOutputDir").get("").handleDirPattern(initialOrCurrentUser),
+    color: color,
+    aurRepo: aurRepo,
+    aurComments: options.hasKey("AurComments"),
+    checkIgnored: options.hasKey("CheckIgnored"),
+    ignoreArch: options.hasKey("IgnoreArch"),
+    printAurNotFound: options.hasKey("PrintAurNotFound"),
+    printLocalIsNewer: options.hasKey("PrintLocalIsNewer"),
+    sudoExec: options.hasKey("SudoExec"),
+    viewNoDefault: options.hasKey("ViewNoDefault"),
+    keepBuildDirOnFailure: options.hasKey("KeepBuildDirOnFailure"),
+    keepBuiltPackagesOnFailure: options.hasKey("KeepBuiltPackagesOnFailure"),
+    cleanupAfterInstall: toSeq(enumerate[CleanupPolicy]())
+      .filterIt(some($it) == options.opt("CleanupAfterInstall"))
+      .optLast.get(CleanupPolicy.full),
+    preserveBuilt: toSeq(enumerate[PreserveBuilt]())
+      .filterIt(some($it) == options.opt("PreserveBuilt"))
+      .optLast.get(PreserveBuilt.disabled),
+    preBuildCommand: options.opt("PreBuildCommand"),
+    sudoCommand: options.opt("PreferredSudoCommand").getSudoPrefix(),
+  )
 
 template withAlpmConfig*(config: Config, passDbs: bool,
   handle: untyped, alpmDbs: untyped, errors: untyped, body: untyped): untyped =

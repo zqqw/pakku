@@ -370,8 +370,25 @@ proc createConfigFromTable(table: Table[string, string], dbs: seq[string]): Pacm
     raise commandError(tr"can not get the architecture",
       colorNeeded = some(color.get))
 
-  ((dbs, archFinal, false, true, chomp, verbosePkgLists, downloadTimeout, none(string), true,
-    ignorePkgs, ignoreGroups), none(string), rootRel, dbRel, cacheRel, gpgRel, color)
+  PacmanConfig(
+    common: CommonConfig(
+      dbs: dbs,
+      arch: archFinal,
+      progressBar: true,
+      chomp: chomp,
+      verbosePkgLists: verbosePkgLists,
+      downloadTimeout: downloadTimeout,
+      defaultRoot: true,
+      ignorePkgs: ignorePkgs,
+      ignoreGroups: ignoreGroups,
+    ),
+    sysrootOption: none(string),
+    rootRelOption: rootRel,
+    dbRelOption: dbRel,
+    cacheRelOption: cacheRel,
+    gpgRelOption: gpgRel,
+    colorMode: color,
+  )
 
 proc obtainPacmanConfig*(args: seq[Argument]): PacmanConfig =
   proc getAll(pair: OptionPair): seq[string] =
@@ -449,11 +466,27 @@ proc obtainPacmanConfig*(args: seq[Argument]): PacmanConfig =
   let argsRootRel = rootRel.get("/")
   let defaultRoot = defaultRootRel == argsRootRel
 
-  let config: PacmanConfig = ((defaultConfig.common.dbs, arch, debug, progressBar, defaultConfig.common.chomp,
-    defaultConfig.common.verbosePkgLists, defaultConfig.common.downloadTimeout and downloadTimeout,
-    pgpKeyserver, defaultRoot, ignorePkgs + defaultConfig.common.ignorePkgs,
-    ignoreGroups + defaultConfig.common.ignoreGroups),
-    sysroot, rootRel, dbRel, cacheRel, gpgRel, color)
+  let common = block:
+    var c = defaultConfig.common
+    c.arch = arch
+    c.debug = debug
+    c.progressBar = progressBar
+    c.downloadTimeout = c.downloadTimeout and downloadTimeout
+    c.pgpKeyserver = pgpKeyserver
+    c.defaultRoot = defaultRoot
+    c.ignorePkgs = ignorePkgs + c.ignorePkgs
+    c.ignoreGroups = ignoreGroups + c.ignoreGroups
+    c
+
+  let config: PacmanConfig = PacmanConfig(
+    common: common,
+    sysrootOption: sysroot,
+    rootRelOption: rootRel,
+    dbRelOption: dbRel,
+    cacheRelOption: cacheRel,
+    gpgRelOption: gpgRel,
+    colorMode: color,
+  )
 
   pacmanValidateAndThrow((("sysroot", sysroot, ArgumentType.long), sysroot.isSome),
     (("root", some(config.pacmanRootRel), ArgumentType.long), not defaultRoot),
