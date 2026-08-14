@@ -1,4 +1,3 @@
-VERSION = 0.16
 DIST_MODE = false
 
 MAN_PAGES = \
@@ -43,12 +42,19 @@ MANDIR = ${PREFIX}/share/man
 LOCALSTATEDIR = /var
 SYSCONFDIR = /etc
 
-ifneq ($(wildcard .git),)
-RVERSION = $(shell (git describe --tags 2> /dev/null || echo v${VERSION}) | \
-tail -c +2 | head -1)
-else
-RVERSION = ${VERSION}
-endif
+# Version authority:
+#   config.nims:
+#     Version - actual manually maintained release number.
+#     EffectiveVersion - adds "-dev" for non-release builds.
+#   RVERSION:
+#     `(git describe || CFG_VERSION)` - git tags win in clones and
+#     AUR `-git` builds, the constant fallback covers no-git builds (tarballs).
+#
+# Make injects RVERSION to compile options directly and overrides config.nims
+# so release builds and man generation carry the accurate git-aware version.
+CFG_VERSION = $(shell sed -n 's/^[[:space:]]*Version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' config.nims)
+RVERSION = $(shell (git describe --tags 2> /dev/null || echo "$(CFG_VERSION)") \
+             | sed 's/^v//')
 
 NIM_CACHE_DIR = nimcache
 
@@ -63,7 +69,7 @@ ASCIIDOC_OPTIONS = \
 	-a mansource='Pakku' \
 	-a manversion="${RVERSION}"
 
-.PHONY: all clean install uninstall distcheck
+.PHONY: all clean install uninstall distcheck release releasecheck
 
 all: \
 	${TARGETS} \
@@ -159,7 +165,6 @@ distcheck:
 	@for f in ${DIST}; do cp -d --parents $$f 'pakku-${RVERSION}'; done
 
 	@sed -i 'pakku-${RVERSION}/Makefile' \
-	-e 's/^VERSION =.*/VERSION = ${RVERSION}/' \
 	-e 's/^DIST_MODE =.*/DIST_MODE = true/'
 
 	@(cd 'pakku-${RVERSION}' && \
@@ -175,3 +180,17 @@ distcheck:
 	${EXTRA_DIST:%='pakku-${RVERSION}'/%}
 
 	@rm -rf 'pakku-${RVERSION}'
+
+# Explicit ceonvenience path
+release: releasecheck
+	$(MAKE) distcheck
+
+# Opt-in check version/git-tag de-sync before release:
+# Require HEAD to sit exactly on v${CFG_VERSION} - version read from config.nims
+releasecheck:
+	@{ test -n "$(CFG_VERSION)" || { echo "releasecheck: Version empty in config.nims"; exit 1; }; \
+	   desc="$$(git describe --tags --exact-match 2>/dev/null)"; \
+	   test -n "$$desc" || { echo "releasecheck: HEAD is not exactly on a tag"; exit 1; }; \
+	   test "$$desc" = "v${CFG_VERSION}" || { echo "releasecheck: tag $$desc != v${CFG_VERSION} (config.nims Version)"; exit 1; }; \
+	   test -z "$$(git status --porcelain)" || { echo "releasecheck: tree has uncommitted changes"; exit 1; }; }
+	@echo "releasecheck: on v${CFG_VERSION}, tree clean"
