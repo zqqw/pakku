@@ -1,14 +1,12 @@
 const
-  Version       = "0.17" # also read by make unless it's building from a git-tagged commit
-  EffectiveVersion = when defined(release): Version else: Version & "-dev"
+  Version       = "0.16-dev"
   Prefix        = "/usr/local"
   SysConfDir    = "/etc"
   LocalStateDir = "/var"
   Copyright     = """2018-2019 kitsunyan
-2020-2026 zqqw
-2026 ZoomRmc"""
+2020-2023 zqqw"""
 
-switch("define", "pakkuVersion=" & EffectiveVersion)
+switch("define", "pakkuVersion=" & Version)
 switch("define", "pakkuPrefix=" & Prefix)
 switch("define", "SysConfDir=" & SysConfDir)
 switch("define", "LocalStateDir=" & LocalStateDir)
