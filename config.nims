@@ -1,12 +1,71 @@
+import std/[os, strutils]
+
 const
-  Version       = "0.16-dev"
+  # The only hand-maintained number; keep it equal to the git tag
+  # (`make releasecheck` verifies this). Everything else is derived.
+  Version       = "0.18"
   Prefix        = "/usr/local"
   SysConfDir    = "/etc"
   LocalStateDir = "/var"
   Copyright     = """2018-2019 kitsunyan
-2020-2023 zqqw"""
+2020-2023 zqqw
+2026 ZoomRmc"""
 
-switch("define", "pakkuVersion=" & Version)
+const
+  # A release must be asked for; `-d:pakkuDev` forces a development build even
+  # then, for testing a tagged tree without claiming a release.
+  IsRelease = defined(release) and not defined(pakkuDev)
+
+  # Resolved here rather than in the Makefile so `nim c` and `make` agree.
+  # Empty without git metadata (release tarball, shallow clone).
+  GitDescribe = staticExec("git describe --tags --always --dirty 2>/dev/null").strip
+
+  Dirty = GitDescribe.endsWith("-dirty")
+  Clean = block:
+    var s = GitDescribe
+    if s.endsWith("-dirty"):
+      s.setLen(s.len - "-dirty".len)
+    if s.len > 0 and s[0] == 'v':
+      s[1 .. ^1]
+    else:
+      s
+
+  # "v0.18-3-g3d1b0a0" -> "0.18.r3.g3d1b0a0". Deliberately the same shape the AUR
+  # -git PKGBUILD derives, so `pakku -V` and `pkgver` never disagree.
+  DescribeVersion = block:
+    var parts = Clean.split('-')
+    if parts.len >= 3:
+      parts[^2] = "r" & parts[^2]
+      parts.join(".")
+    elif Clean.len > 0 and Clean.contains('.'):
+      Clean
+    else:
+      ""   # bare commit hash carries no version
+
+  # Final version, by mode:
+  #
+  #   release               0.18                 Version, ignoring git
+  #   tagged, dev           0.18-dev             on the tag but not a release
+  #   tagged, dirty         0.18-dev-dirty       same, uncommitted changes
+  #   ahead of tag          0.18.r3.g3d1b0a0     commit identity from git
+  #   ahead of tag, dirty   0.18.r3.g3d1b0a0.dirty
+  #   no git metadata       0.18-dev             tarball or shallow clone
+  #
+  # Release builds ignore git entirely: the `pakku` tarball has no .git, so
+  # Version must be sufficient on its own.
+  AppVersion =
+    if IsRelease:
+      Version
+    elif Clean.len == 0 or DescribeVersion.len == 0:
+      Version & "-dev"
+    elif DescribeVersion == Version:
+      Version & "-dev" & (if Dirty: "-dirty" else: "")
+    elif Dirty:
+      DescribeVersion & ".dirty"
+    else:
+      DescribeVersion
+
+switch("define", "pakkuVersion=" & AppVersion)
 switch("define", "pakkuPrefix=" & Prefix)
 switch("define", "SysConfDir=" & SysConfDir)
 switch("define", "LocalStateDir=" & LocalStateDir)
@@ -27,7 +86,8 @@ when defined(release):
   --hint:"[Link]:off"
   --hint:"[SuccessX]:off"
 
-import std/[os, strutils]
+task version, "print the version the build would stamp":
+  echo AppVersion
 
 task build, "development debug build":
   # propagates custom args

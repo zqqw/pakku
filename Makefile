@@ -1,4 +1,3 @@
-VERSION = 0.16
 DIST_MODE = false
 
 MAN_PAGES = \
@@ -43,19 +42,16 @@ MANDIR = ${PREFIX}/share/man
 LOCALSTATEDIR = /var
 SYSCONFDIR = /etc
 
-ifneq ($(wildcard .git),)
-RVERSION = $(shell (git describe --tags 2> /dev/null || echo v${VERSION}) | \
-tail -c +2 | head -1)
-else
-RVERSION = ${VERSION}
-endif
-
 NIM_CACHE_DIR = nimcache
 
 NIM_OPTIONS = \
 	-d:release \
-	-d:pakkuVersion="${RVERSION}" \
 	-d:pakkuPrefix="${PREFIX}"
+
+# Resolved by config.nims, which stamps both the binary and the man pages. Queried
+# through its `version` task rather than parsed here, so `nim c` and `make` agree.
+# NIM_OPTIONS adds -d:release, so the query must see it too.
+RVERSION = $(shell nim -d:release version 2>/dev/null | tail -1)
 
 ASCIIDOC_OPTIONS = \
 	-f doc/asciidoc.conf \
@@ -63,7 +59,7 @@ ASCIIDOC_OPTIONS = \
 	-a mansource='Pakku' \
 	-a manversion="${RVERSION}"
 
-.PHONY: all clean install uninstall distcheck
+.PHONY: all clean install uninstall distcheck releasecheck
 
 all: \
 	${TARGETS} \
@@ -159,8 +155,9 @@ distcheck:
 	@for f in ${DIST}; do cp -d --parents $$f 'pakku-${RVERSION}'; done
 
 	@sed -i 'pakku-${RVERSION}/Makefile' \
-	-e 's/^VERSION =.*/VERSION = ${RVERSION}/' \
 	-e 's/^DIST_MODE =.*/DIST_MODE = true/'
+	@sed -i 'pakku-${RVERSION}/config.nims' \
+	-e 's/^\([[:space:]]*Version[[:space:]]*= \).*/\1"${RVERSION}"/'
 
 	@(cd 'pakku-${RVERSION}' && \
 	make && \
@@ -175,3 +172,13 @@ distcheck:
 	${EXTRA_DIST:%='pakku-${RVERSION}'/%}
 
 	@rm -rf 'pakku-${RVERSION}'
+
+# Opt-in: HEAD must be exactly v${RVERSION}, clean. Not part of the default build
+# because AUR PKGBUILDs build arbitrary commits that are legitimately not releases.
+releasecheck:
+	@{ test -n "${RVERSION}" || { echo "releasecheck: could not resolve version"; exit 1; }; \
+	   desc="$$(git describe --tags --exact-match 2>/dev/null)"; \
+	   test -n "$$desc" || { echo "releasecheck: HEAD is not exactly on a tag"; exit 1; }; \
+	   test "$$desc" = "v${RVERSION}" || { echo "releasecheck: tag $$desc != v${RVERSION} (config.nims Version)"; exit 1; }; \
+	   test -z "$$(git status --porcelain)" || { echo "releasecheck: tree has uncommitted changes"; exit 1; }; }
+	@echo "releasecheck: on v${RVERSION}, tree clean"
