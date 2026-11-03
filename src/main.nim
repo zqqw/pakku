@@ -1,5 +1,5 @@
 import
-  options, os, posix, re, sequtils, strutils, sugar,
+  options, os, posix, sequtils, strutils, sugar,
   args, config, format, pacman, utils
 when not declared(system.stdout): import std/syncio
 
@@ -188,7 +188,7 @@ proc handleHelp(operation: OperationType) =
   let (lines, _) = forkWaitRedirect(() => execRedirect(pacmanCmd & operationArgs))
 
   for line in lines:
-    echo(line.replace(re"\bpacman\b", "pakku"))
+    echo(line.replaceWord("pacman", "pakku"))
 
   if lines.len > 0:
     case operation:
