@@ -201,10 +201,8 @@ proc handleHelp(operation: OperationType) =
         discard
 
 const
-  pakkuVersion {.strdefine.} = ""
   pakkuCopyright {.strdefine.} = ""
 static:
-  doAssert pakkuVersion != "", "config.nims must define pakkuVersion"
   doAssert pakkuCopyright != "", "config.nims must define pakkuCopyright"
 
 
