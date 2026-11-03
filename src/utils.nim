@@ -44,10 +44,12 @@ proc cunsetenv*(name: cstring): cint
   {.importc: "unsetenv", header: "<stdlib.h>".}
 
 const
+  pakkuVersion* {.strdefine.} = ""
   pakkuPrefix* {.strdefine.} = ""
   LocalStateDir* {.strdefine.} = ""
   SysConfDir* {.strdefine.} = ""
 static:
+  doAssert pakkuVersion != "", "config.nims must define pakkuVersion"
   doAssert pakkuPrefix != "", "config.nims must define pakkuPrefix"
   doAssert LocalStateDir != "", "config.nims must define LocalStateDir"
   doAssert SysConfDir != "", "config.nims must define SysConfDir"

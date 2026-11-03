@@ -203,6 +203,8 @@ proc findAurPackages*(query: seq[string], repo: string, useTimeout: bool):
               rpcInfos
 
           (filteredRpcInfos, none(string))
+      except JsonParsingError:
+        (@[], some(tr"failed to parse server response"))
       except CurlError:
         (@[], some(getCurrentException().msg))
 
