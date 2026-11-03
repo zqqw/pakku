@@ -34,6 +34,8 @@ type
     shell: string
   ]
 
+  KeyvalPair* = tuple[key: string, value: string]
+
 proc cgetenv*(name: cstring): cstring
   {.importc: "getenv", header: "<stdlib.h>".}
 
@@ -155,6 +157,80 @@ proc parseNumberIntervals*(input: string; maxValue: Positive
         merged[^1] = last
       else: merged.add iv
   some(merged)
+
+func stripHtmlTags*(s: string): string =
+  ## Removes every region enclosed by `'<'` and the next matching `'>'`
+  ## found later on the same line -- i.e. markup fragments like `<br>` or
+  ## `<span class="x">` -- returning the remaining text.
+  ##
+  ## Guarantees: regions never span line breaks (`\n` terminates a region
+  ## without being consumed); regions never nest (the first closing bracket
+  ## ends the region); a delimiter without a pair (an unclosed `'<'`, or
+  ## text containing bare brackets) passes through verbatim, and scanning
+  ## resumes from there so later well-formed regions are still removed.
+  ##
+  ## Single pass with one cursor: searching ahead for a closing bracket on
+  ## every '<' would make a run of unmatched brackets quadratic.
+  result = newStringOfCap(s.len)
+  var i = 0
+  # index of a '<' still awaiting its '>', or -1 outside a region
+  var open = -1
+  while i < s.len:
+    let c = s[i]
+    if c == '\n':
+      # a region cannot span a line break, so a pending one passes through
+      if open != -1:
+        result.add '<'
+        result.add s[open + 1 ..< i]
+        open = -1
+      result.add c
+    elif open != -1:
+      if c == '>': open = -1
+    elif c == '<':
+      open = i
+    else:
+      result.add c
+    inc i
+  if open != -1:
+    result.add '<'
+    result.add s[open + 1 .. ^1]
+
+func replaceRuns*(s: string; chars: set[char]; minRun: Positive;
+    by: string): string =
+  ## Rewrites whitespace-style artifacts in one linear pass: every maximal
+  ## run of characters drawn from `chars` that spans at least `minRun`
+  ## characters becomes exactly `by`; shorter runs and everything outside
+  ## `chars` pass through untouched.
+  ##
+  ## Runs are maximal by construction and scanned greedily left to right,
+  ## so adjacent output segments never re-trigger the pattern, each
+  ## qualifying run maps to exactly one `by`, and the result length never
+  ## depends on evaluation order. Typical uses: collapsing aligned-column
+  ## space padding, double-spaced sentence gaps, and paragraph-break runs
+  ## of newlines back to their canonical forms.
+  result = newStringOfCap(s.len)
+  var i = 0
+  while i < s.len:
+    var j = i
+    let segIsRun = s[i] in chars
+    while j < s.len and ((s[j] in chars) == segIsRun):
+      inc j
+    if segIsRun and j - i >= minRun:
+      result.add by
+    else:
+      result.add s[i ..< j]
+    i = j
+
+func splitKeyval*(line: string): Option[KeyvalPair] =
+  ## Splits an INI-style directive at its first `'='`, trimming whitespace
+  ## from both halves (the same reading contract as pacman's parse_ini and
+  ## every other lenient `.SRCINFO` consumer). Lines without `'='` or with
+  ## an empty key do not match; empty values do.
+  let eq = line.find('=')
+  if eq < 1: return none(KeyvalPair)
+  let key = strip(line[0 ..< eq])
+  if key.len == 0: return none(KeyvalPair)
+  some((key, strip(line[(eq + 1)..^1])))
 
 proc opt*[K, V](table: Table[K, V], key: K): Option[V] =
   if table.hasKey(key): some(table[key]) else: none(V)

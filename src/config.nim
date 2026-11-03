@@ -1,5 +1,5 @@
 import
-  std/[options, posix, re, sequtils, sets, strutils, sugar, tables],
+  std/[options, posix, sequtils, sets, strutils, sugar, tables],
   utils
 when not declared(system.stdout): import std/syncio
 
@@ -68,6 +68,19 @@ type
     preBuildCommand*: Option[string]
     sudoCommand*: seq[string]
 
+
+func matchConfigSection*(line: string): Option[string] =
+  ## Mirrors pacman's parse_ini section rule exactly: a section header is a
+  ## line whose first character is `'['` and last is `']'`; the name is the
+  ## verbatim content between them (`"[a][b]"` names `"a][b"`). Anything
+  ## else -- including `'['`-prefixed lines with trailing junk -- is treated
+  ## as a directive by the caller, matching upstream behavior where such
+  ## lines warn as unrecognized directives instead of opening sections.
+  if line.startsWith("[") and line.endsWith("]"):
+    some(line[1 ..< ^1])
+  else:
+    none(string)
+
 proc readConfigFile*(configFile: string):
   (OrderedTable[string, ref Table[string, string]], bool) =
   var file: File
@@ -77,29 +90,30 @@ proc readConfigFile*(configFile: string):
 
   let wasError = if file.open(configFile):
       try:
-        var matches: array[2, string]
-
         while true:
           let line = readLine(file).strip(leading = true, trailing = true)
           if line.len > 0 and line[0] != '#':
-            if line.match(re"\[(.*)\]", matches):
-              currentCategory = matches[0]
+            let section = matchConfigSection(line)
+            if section.isSome:
+              currentCategory = section.unsafeGet
               if table.hasKey(currentCategory):
                 category = table[currentCategory]
               else:
                 category = newTable[string, string]()
                 table[currentCategory] = category
             elif currentCategory.len > 0:
-              if line.match(re"(\w+)\ *=\ *(.*)", matches):
-                if matches[0] == "IgnorePkg" or matches[0] == "HoldPkg":
-                  if category.hasKey(matches[0]):
-                    if not isEmptyOrWhitespace(matches[1]): # stop empty lines adding spaces
-                      category[matches[0]] = category[matches[0]] & " " & matches[1]
+              let kv = splitKeyval(line)
+              if kv.isSome:
+                let (key, value) = kv.unsafeGet
+                if key == "IgnorePkg" or key == "HoldPkg":
+                  if category.hasKey(key):
+                    if not isEmptyOrWhitespace(value): # stop empty lines adding spaces
+                      category[key] = category[key] & " " & value
                   else:
-                    if not isEmptyOrWhitespace(matches[1]):
-                      category[matches[0]] = matches[1]
+                    if not isEmptyOrWhitespace(value):
+                      category[key] = value
                 else:
-                  category[matches[0]]= matches[1]
+                  category[key] = value
               else:
                 category[line]=""
 
@@ -180,8 +194,9 @@ proc obtainConfig*(config: PacmanConfig): Config =
     aurRepo = options.opt("AurRepo").get("aur")
 
   if config.common.dbs.find(aurRepo) >= 0:
-    raise commandError(tr"repo '$#' can not be used as fake AUR repository" % [aurRepo],
-      colorNeeded = some(color))
+    raise commandError(tr"repo '$#' can not be used as fake AUR repository" %
+      [aurRepo], colorNeeded = some(color))
+
 
   if aurRepo.find('/') >= 0:
     raise commandError(trp("could not register '%s' database (%s)\n") %
