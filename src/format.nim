@@ -1,5 +1,5 @@
 import
-  std/[macros, options, posix, sequtils, strutils, sugar, times, unicode, terminal],
+  std/[macros, options, posix, sequtils, strutils, sugar, times, unicode, terminal, wordwrap],
   utils
 when not declared(system.stdout): import std/syncio
 
@@ -17,12 +17,6 @@ type
     newVersion: string
   ]
 
-  CommentFormat* = tuple[
-    author: string,
-    date: string,
-    text: string,
-    pinned: bool
-  ]
 
   Color {.pure.} = enum
     normal = "\x1b[0m"
@@ -225,10 +219,45 @@ proc printPackages*(color: bool, verbose: bool, packages: seq[PackageInstallForm
   else:
     printPackagesRegular(color, false, packages)
 
-proc printComments*(color: bool, maintainer: Option[string],
-  comments: seq[CommentFormat]) =
+func stripControlBytes(s: string; keepNewlines: bool): string =
+  ## Drops control bytes and ANSI/OSC sequences from untrusted comment fields.
+  var i = 0
+  while i < s.len:
+    let c = s[i]
+    if c == '\e':
+      if i + 1 < s.len and s[i + 1] == '[': # CSI
+        inc i, 2
+        while i < s.len and s[i] notin {'@'..'~'}: inc i
+        if i < s.len: inc i
+      elif i + 1 < s.len and s[i + 1] == ']': # OSC
+        inc i, 2
+        while i < s.len and s[i] != '\x07':
+          if s[i] == '\e' and i + 1 < s.len and s[i + 1] == '\\':
+            inc i, 2
+            break
+          inc i
+        if i < s.len and s[i] == '\x07': inc i
+      else:
+        inc i, (if i + 1 < s.len: 2 else: 1)
+      continue
+    if c == '\n' and keepNewlines: result.add c
+    elif ord(c) >= 0x20 and ord(c) != 0x7F: result.add c
+    inc i
+
+proc wrapCommentText(text: string): string =
+  ## Keeps paragraph breaks while wrapping each line to the terminal width.
+  var first = true
+  for line in text.replace("\n\n", "\n").splitLines:
+    if not first: result.add '\n'
+    result.add line.strip.wrapWords(maxLineWidth = terminalWidth())
+    first = false
+
+proc printComments*[T](color: bool, maintainer: Option[string],
+  comments: openArray[T]) =
   echo()
   for comment in comments:
+    let safeAuthor = stripControlBytes(comment.author, false)
+    let safeDate = stripControlBytes(comment.date, false)
     var badge = ""
     if maintainer == some(comment.author):
       badge.add:
@@ -239,10 +268,10 @@ proc printComments*(color: bool, maintainer: Option[string],
         ^Color.magenta & "[pinned]" & ^Color.normal & " "
 
     echo(
-      ^Color.blue & comment.author & ^Color.normal & " " & badge &
-      ^Color.bold & comment.date & ^Color.normal
+      ^Color.blue & safeAuthor & ^Color.normal & " " & badge &
+      ^Color.bold & safeDate & ^Color.normal
     )
-    echo(comment.text.replace("\n\n", "\n"))
+    echo(wrapCommentText(stripControlBytes(comment.text, true)))
     echo()
 
 proc printColon*(color: bool, s: string) =
