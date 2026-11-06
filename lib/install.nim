@@ -1,5 +1,5 @@
 import
-  os, posix, sequtils, strutils
+  os, posix, strutils
 import ../src/[helperproto, i18n]
 when not declared(system.stdout): import std/syncio
 
@@ -86,18 +86,23 @@ proc handleInstall*(params: seq[string]): int =
       fail(e.msg)
       return 1
 
-  if command.uid >= 0 and command.gid >= 0:
-    for item in command.items:
+  ## One walk over the packages: preserve each archive and sidecar, and sort the
+  ## names for the two `pacman -D` calls at the same time.
+  var files, explicit, deps: seq[string]
+  let chown = command.uid >= 0 and command.gid >= 0
+  for item in command.items:
+    if chown:
       let name = item.file.extractFilename
       for (source, target) in [(item.file, name), (item.file & ".sig", name & ".sig")]:
         copyPreserved(source, command.destination / target, command.uid,
           command.gid)
+    files.add item.file
+    case item.mode
+      of "explicit": explicit.add item.name
+      of "dependency": deps.add item.name
+      else: discard
 
-  let explicit = command.items.filterIt(it.mode == "explicit").mapIt(it.name)
-  let deps = command.items.filterIt(it.mode == "dependency").mapIt(it.name)
-
-  let installCode = runCommand(command.upgrade & "--" &
-    command.items.mapIt(it.file), true)
+  let installCode = runCommand(command.upgrade & "--" & files, true)
 
   let explicitCode = if explicit.len > 0:
       runCommand(command.database & "--asexplicit" & "--" & explicit, false)
