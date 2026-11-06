@@ -630,7 +630,9 @@ proc findArtifactsInDir(config: Config; dir: string;
   for (kind, path) in walkDir(dir):
     if kind == pcFile:
       for stem in artifactStemFromFilename(path.extractFilename, extGlob):
-        if stem in expected and stem notin fileTable:
+        ## Matching is by name only, so an archive that an interrupted write or
+        ## a full disk left empty would otherwise be handed to pacman as-is.
+        if stem in expected and stem notin fileTable and getFileSize(path) > 0:
           fileTable[stem] = path
 
   var artifacts = newSeq[BuildArtifact]()

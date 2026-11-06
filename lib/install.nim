@@ -63,18 +63,31 @@ proc isSameFile(a, b: string): bool =
   except CatchableError:
     false
 
+proc removeQuietly(path: string) =
+  try:
+    removeFile(path)
+  except CatchableError:
+    discard
+
 proc copyPreserved(source, dest: string; uid, gid: int): void =
   ## Copies a built archive or its signature sidecar to the preserve
   ## destination. A file that is already in place is left untouched: copying it
   ## onto itself truncates it, because the destination is opened for writing
   ## before the source is read. A missing sidecar is not an error.
+  ##
+  ## The copy lands under a `.part` name and is renamed into place, so an
+  ## interrupted write cannot leave a truncated archive where the reuse scan
+  ## would match it by name.
   if isSameFile(source, dest):
     return
   if not fileExists(source):
     return
+  let partial = dest & ".part"
   try:
-    copyFile(source, dest)
+    copyFile(source, partial)
+    moveFile(partial, dest)
   except CatchableError as e:
+    removeQuietly(partial)
     warn(tr("failed to copy '$#' to '$#': $#") % [source, dest, e.msg])
     return
   discard chown(cstring(dest), (Uid) uid, (Gid) gid)
