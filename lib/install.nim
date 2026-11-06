@@ -1,5 +1,6 @@
 import
   os, posix, sequtils, strutils, sugar
+import ../src/i18n
 when not declared(system.stdout): import std/syncio
 
 proc splitCommands(params: seq[string], index: int, res: seq[seq[string]]): seq[seq[string]] =
@@ -44,9 +45,10 @@ proc take(params: seq[string], start: int, count: int): (seq[string], int) =
 
 proc warn(message: string): void =
   ## Reports a non-fatal problem. The helper inherits pakku's streams, so this
-  ## appears next to pacman's output instead of aborting the installation.
+  ## appears next to pacman's output instead of aborting the installation. The
+  ## prefix comes from pacman's catalogue, matching `printWarning` in the parent.
   try:
-    stderr.writeLine("warning: " & message)
+    stderr.writeLine(trp"warning: ", message)
     stderr.flushFile()
   except CatchableError:
     discard
@@ -74,7 +76,7 @@ proc copyPreserved(source, dest: string; uid, gid: int): void =
   try:
     copyFile(source, dest)
   except CatchableError as e:
-    warn("failed to copy '" & source & "' to '" & dest & "': " & e.msg)
+    warn(tr("failed to copy '$#' to '$#': $#") % [source, dest, e.msg])
     return
   discard chown(cstring(dest), (Uid) uid, (Gid) gid)
 

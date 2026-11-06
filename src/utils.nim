@@ -13,7 +13,9 @@ import
     osproc,
     streams,
     strtabs
-  ]
+  ],
+  i18n
+export i18n
 
 var firstCreatedTmpDir*: string
 
@@ -537,25 +539,3 @@ proc bashEscape*(s: string): string =
     else:
       result &= c
 
-proc dgettext(domain: cstring, s: cstring): cstring
-  {.cdecl, importc: "dgettext".}
-
-proc gettext(domain: string, s: string): string =
-  let translated = dgettext(domain, s)
-  if translated != nil: $translated else: s
-
-proc gettextHandle(domain: string, s: string): string =
-  let res = gettext(domain, s).replace("%s", "$#").replace("%c", "$#")
-  if res.len > 0 and res[^1 .. ^1] == "\n": res[0 .. ^2] else: res
-
-template tr*(s: string): string =
-  gettext("pakku", s)
-
-template trp*(s: string): string =
-  gettextHandle("pacman", s)
-
-template tra*(s: string): string =
-  gettextHandle("libalpm", s)
-
-template trc*(s: string): string =
-  gettextHandle("libc", s)
