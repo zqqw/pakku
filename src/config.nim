@@ -1,5 +1,5 @@
 import
-  std/[options, posix, re, sequtils, sets, strutils, sugar, tables],
+  std/[options, posix, re, sets, strutils, sugar, tables],
   utils
 when not declared(system.stdout): import std/syncio
 
@@ -19,6 +19,35 @@ type
     full = "Full",
     worktree = "Worktree",
     none = "None"
+
+  OptionKey {.pure.} = enum
+    ## Every key pakku.conf accepts, spelled as pakku.conf(5) documents it.
+    userCacheDir = "UserCacheDir",
+    tmpDir = "TmpDir",
+    packageOutputDir = "PackageOutputDir",
+    aurRepo = "AurRepo",
+    preBuildCommand = "PreBuildCommand",
+    preferredSudoCommand = "PreferredSudoCommand",
+    cleanupAfterInstall = "CleanupAfterInstall",
+    preserveBuilt = "PreserveBuilt",
+    aurComments = "AurComments",
+    checkIgnored = "CheckIgnored",
+    ignoreArch = "IgnoreArch",
+    printAurNotFound = "PrintAurNotFound",
+    printLocalIsNewer = "PrintLocalIsNewer",
+    sudoExec = "SudoExec",
+    viewNoDefault = "ViewNoDefault",
+    keepBuildDirOnFailure = "KeepBuildDirOnFailure",
+    keepBuiltPackagesOnFailure = "KeepBuiltPackagesOnFailure"
+
+  PakkuOptions = object
+    ## Accepted options from pakku.conf: the presence-based ones that are set
+    ## truthy, the raw value of each string-valued one, and the messages for
+    ## whatever was rejected. Parsing fills this in one pass, so callers read
+    ## exactly the value that was checked.
+    flags: set[OptionKey]
+    values: array[OptionKey, Option[string]]
+    errors: seq[string]
 
   CommonConfig* = object
     dbs*: seq[string]
@@ -68,7 +97,19 @@ type
     preBuildCommand*: Option[string]
     sudoCommand*: seq[string]
 
-proc readConfigFile*(configFile: string):
+func stripComment(line: string; enabled: bool): string =
+  ## Drops a trailing comment when `enabled`. A '#' starts a comment only at the
+  ## beginning of the line or after whitespace, so values that legitimately
+  ## contain '#' (URLs with fragments, paths) survive. pacman.conf keeps its own
+  ## semantics: it is parsed with this disabled.
+  if not enabled:
+    return line
+  for index, character in line:
+    if character == '#' and (index == 0 or line[index - 1] in Whitespace):
+      return line[0 ..< index]
+  line
+
+proc readConfigFile*(configFile: string; inlineComments = false):
   (OrderedTable[string, ref Table[string, string]], bool) =
   var file: File
   var table = initOrderedTable[string, ref Table[string, string]]()
@@ -80,7 +121,8 @@ proc readConfigFile*(configFile: string):
         var matches: array[2, string]
 
         while true:
-          let line = readLine(file).strip(leading = true, trailing = true)
+          let line = stripComment(readLine(file), inlineComments)
+            .strip(leading = true, trailing = true)
           if line.len > 0 and line[0] != '#':
             if line.match(re"\[(.*)\]", matches):
               currentCategory = matches[0]
@@ -115,6 +157,77 @@ proc readConfigFile*(configFile: string):
 
   (table, wasError)
 
+const flagKeys: set[OptionKey] = {
+  OptionKey.aurComments, OptionKey.checkIgnored, OptionKey.ignoreArch,
+  OptionKey.printAurNotFound, OptionKey.printLocalIsNewer, OptionKey.sudoExec,
+  OptionKey.viewNoDefault, OptionKey.keepBuildDirOnFailure,
+  OptionKey.keepBuiltPackagesOnFailure}
+
+func enumFromString[T: enum](value: string): Option[T] =
+  ## `strutils.parseEnum` cannot express an absent member: it either raises or
+  ## falls back to a caller-supplied default. It also folds case and drops
+  ## underscores - `FULL` and `Disabled_` match while the lowercase spelling of
+  ## a value does not - so it would accept spellings pakku.conf(5) never lists.
+  ## Comparing `$` keeps the accepted values exactly the documented ones.
+  for item in T:
+    if $item == value:
+      return some(item)
+  none(T)
+
+func booleanValue(value: string): Option[bool] =
+  ## A flag written without a value is enabled, so an empty value means true.
+  ## The false forms must disable the option rather than leave it enabled.
+  ## `strutils.parseBool` raises instead of returning an option and also accepts
+  ## `on`/`off`/`y`/`n`, which pakku.conf(5) does not list.
+  case value
+    of "", "true", "yes", "1": some(true)
+    of "false", "no", "0": some(false)
+    else: none(bool)
+
+func valueValid(key: OptionKey; value: string): bool =
+  ## Paths and commands take any string. The enum-valued options must name a
+  ## member as spelled in the manual.
+  case key
+    of OptionKey.cleanupAfterInstall: enumFromString[CleanupPolicy](value).isSome
+    of OptionKey.preserveBuilt: enumFromString[PreserveBuilt](value).isSome
+    else: true
+
+func invalidValueMessage(value: string; key: OptionKey;
+    configFile: string): string =
+  tr("invalid value '$#' for '$#'\n") % [value, $key, configFile]
+
+func parseOptions(raw: Table[string, string];
+    configFile: string): PakkuOptions =
+  ## This does not let an unknown value fall back to the default.
+  for key, value in raw.pairs:
+    let option = enumFromString[OptionKey](key)
+    if option.isNone:
+      result.errors.add(tr("unknown option '$#' in '$#'\n") % [key, configFile])
+      continue
+    let name = option.unsafeGet
+    if name in flagKeys:
+      let flag = booleanValue(value)
+      if flag.isNone:
+        result.errors.add(invalidValueMessage(value, name, configFile))
+      elif flag.unsafeGet:
+        result.flags.incl name
+    elif name.valueValid(value):
+      result.values[name] = some(value)
+    else:
+      result.errors.add(invalidValueMessage(value, name, configFile))
+
+func contains(options: PakkuOptions; key: OptionKey): bool =
+  ## A presence-based option is enabled when the file set it truthy.
+  key in options.flags
+
+func `[]`(options: PakkuOptions; key: OptionKey): Option[string] =
+  options.values[key]
+
+func get[T: enum](options: PakkuOptions; key: OptionKey; default: T): T =
+  ## An absent enum-valued option resolves to `default`. An invalid one never
+  ## lands here because `parseOptions` reports it instead of storing it.
+  enumFromString[T](options.values[key].get("")).get(default)
+
 proc ignored*(config: Config, name: string, groups: openArray[string]): bool =
   name in config.common.ignorePkgs or (config.common.ignoreGroups * groups.toHashSet).len > 0
 
@@ -147,16 +260,25 @@ proc simplifyConfigPath(path: string): string =
 proc extendRel*(pathRel: string, sysroot: Option[string]): string =
   sysroot.map(s => (s & "/" & pathRel).simplifyConfigPath).get(pathRel)
 
-proc obtainConfig*(config: PacmanConfig): Config =
+proc obtainConfig*(config: PacmanConfig;
+    configFile = SysConfDir & "/pakku.conf"): Config =
   ## Builds the pakku runtime configuration by layering the pacman config with
   ## user-specified options from the pakku.conf options section.
-  let (configTable, _) = readConfigFile(SysConfDir & "/pakku.conf")
-  let options = configTable.opt("options").map(t => t[]).get(initTable[string, string]())
+  ## `configFile` used by tests
+  let
+    (configTable, _) = readConfigFile(configFile, inlineComments = true)
+    rawOptions = configTable.opt("options")
+      .map(t => t[]).get(initTable[string, string]())
 
-  let root = config.pacmanRootRel.extendRel(config.sysrootOption)
-  let db = config.pacmanDbRel.extendRel(config.sysrootOption)
-  let cache = config.pacmanCacheRel.extendRel(config.sysrootOption)
-  let color = config.colorMode.get
+  let
+    root = config.pacmanRootRel.extendRel(config.sysrootOption)
+    db = config.pacmanDbRel.extendRel(config.sysrootOption)
+    cache = config.pacmanCacheRel.extendRel(config.sysrootOption)
+    color = config.colorMode.get
+
+  let options = parseOptions(rawOptions, configFile)
+  if options.errors.len > 0:
+    raise commandError(options.errors.join, colorNeeded = some(color))
 
   proc handleDirPattern(dirPattern: string, user: User): string =
     dirPattern
@@ -166,10 +288,12 @@ proc obtainConfig*(config: PacmanConfig): Config =
       .replace("$$", "$")
 
   proc obtainUserCacheDir(user: User): string =
-    options.opt("UserCacheDir").get("${HOME}/.cache/pakku").handleDirPattern(user)
+    options[OptionKey.userCacheDir]
+      .get("${HOME}/.cache/pakku").handleDirPattern(user)
 
   proc obtainTmpDir(user: User): string =
-    options.opt("TmpDir").get("/tmp/pakku-${USER}").handleDirPattern(user)
+    options[OptionKey.tmpDir]
+      .get("/tmp/pakku-${USER}").handleDirPattern(user)
 
   let
     initialOrCurrentUser = initialUser.get(currentUser)
@@ -177,7 +301,7 @@ proc obtainConfig*(config: PacmanConfig): Config =
     userCacheCurrent = obtainUserCacheDir(currentUser)
     tmpRootInitial = obtainTmpDir(initialOrCurrentUser)
     tmpRootCurrent = obtainTmpDir(currentUser)
-    aurRepo = options.opt("AurRepo").get("aur")
+    aurRepo = options[OptionKey.aurRepo].get("aur")
 
   if config.common.dbs.find(aurRepo) >= 0:
     raise commandError(tr"repo '$#' can not be used as fake AUR repository" % [aurRepo],
@@ -201,26 +325,24 @@ proc obtainConfig*(config: PacmanConfig): Config =
     userCacheCurrent: userCacheCurrent,
     tmpRootInitial: tmpRootInitial,
     tmpRootCurrent: tmpRootCurrent,
-    packageOutputDir: options.opt("PackageOutputDir").get("").handleDirPattern(initialOrCurrentUser),
+    packageOutputDir: options[OptionKey.packageOutputDir]
+      .get("").handleDirPattern(initialOrCurrentUser),
     color: color,
     aurRepo: aurRepo,
-    aurComments: options.hasKey("AurComments"),
-    checkIgnored: options.hasKey("CheckIgnored"),
-    ignoreArch: options.hasKey("IgnoreArch"),
-    printAurNotFound: options.hasKey("PrintAurNotFound"),
-    printLocalIsNewer: options.hasKey("PrintLocalIsNewer"),
-    sudoExec: options.hasKey("SudoExec"),
-    viewNoDefault: options.hasKey("ViewNoDefault"),
-    keepBuildDirOnFailure: options.hasKey("KeepBuildDirOnFailure"),
-    keepBuiltPackagesOnFailure: options.hasKey("KeepBuiltPackagesOnFailure"),
-    cleanupAfterInstall: toSeq(enumerate[CleanupPolicy]())
-      .filterIt(some($it) == options.opt("CleanupAfterInstall"))
-      .optLast.get(CleanupPolicy.full),
-    preserveBuilt: toSeq(enumerate[PreserveBuilt]())
-      .filterIt(some($it) == options.opt("PreserveBuilt"))
-      .optLast.get(PreserveBuilt.disabled),
-    preBuildCommand: options.opt("PreBuildCommand"),
-    sudoCommand: options.opt("PreferredSudoCommand").getSudoPrefix(),
+    aurComments: OptionKey.aurComments in options,
+    checkIgnored: OptionKey.checkIgnored in options,
+    ignoreArch: OptionKey.ignoreArch in options,
+    printAurNotFound: OptionKey.printAurNotFound in options,
+    printLocalIsNewer: OptionKey.printLocalIsNewer in options,
+    sudoExec: OptionKey.sudoExec in options,
+    viewNoDefault: OptionKey.viewNoDefault in options,
+    keepBuildDirOnFailure: OptionKey.keepBuildDirOnFailure in options,
+    keepBuiltPackagesOnFailure: OptionKey.keepBuiltPackagesOnFailure in options,
+    cleanupAfterInstall: options.get(OptionKey.cleanupAfterInstall,
+      CleanupPolicy.full),
+    preserveBuilt: options.get(OptionKey.preserveBuilt, PreserveBuilt.disabled),
+    preBuildCommand: options[OptionKey.preBuildCommand],
+    sudoCommand: options[OptionKey.preferredSudoCommand].getSudoPrefix(),
   )
 
 template withAlpmConfig*(config: Config, passDbs: bool,
