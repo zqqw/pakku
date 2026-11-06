@@ -1,15 +1,7 @@
 import
-  os, posix, sequtils, strutils, sugar
+  os, posix, sequtils, strutils
 import ../src/[helperproto, i18n]
 when not declared(system.stdout): import std/syncio
-
-proc splitCommands(params: seq[string], index: int, res: seq[seq[string]]): seq[seq[string]] =
-  if index < params.len:
-    let count = params[index].parseInt
-    let args = params[index + 1 .. index + count]
-    splitCommands(params, index + count + 1, res & args)
-  else:
-    res
 
 proc perror*(s: cstring): void {.importc, header: "<stdio.h>".}
 template perror*: void = perror(cstring(paramStr(0)))
@@ -88,59 +80,38 @@ proc copyPreserved(source, dest: string; uid, gid: int): void =
   discard chown(cstring(dest), (Uid) uid, (Gid) gid)
 
 proc handleInstall*(params: seq[string]): int =
-  ## The first argument is the protocol version. A helper left over from an
-  ## older pakku would otherwise read the same layout with the old meaning and
-  ## copy files before failing, or silently keep old behaviour.
-  let got = if params.len > 0: params[0] else: ""
-  if got != $helperProtocol:
-    fail(tr("install helper speaks protocol $#, pakku sent '$#'; " &
-      "reinstall pakku") % [$helperProtocol, got])
-    return 1
+  let command = try:
+      decodeInstall(params)
+    except ProtocolError as e:
+      fail(e.msg)
+      return 1
 
-  let (head, headIndex) = params.take(1, 3)
-  let destination = head[0]
-  let uid = head[1].parseInt
-  let gid = head[2].parseInt
+  if command.uid >= 0 and command.gid >= 0:
+    for item in command.items:
+      let name = item.file.extractFilename
+      for (source, target) in [(item.file, name), (item.file & ".sig", name & ".sig")]:
+        copyPreserved(source, command.destination / target, command.uid,
+          command.gid)
 
-  let (upgradeCommand, upgradeIndex) = params
-    .take(headIndex + 1, params[headIndex].parseInt)
-  let (databaseCommand, databaseIndex) = params
-    .take(upgradeIndex + 1, params[upgradeIndex].parseInt)
+  let explicit = command.items.filterIt(it.mode == "explicit").mapIt(it.name)
+  let deps = command.items.filterIt(it.mode == "dependency").mapIt(it.name)
 
-  let packages = params[databaseIndex .. ^1]
-  if packages.len /% 3 * 3 != packages.len:
-    raise newException(CatchableError, "invalid arguments")
+  let installCode = runCommand(command.upgrade & "--" &
+    command.items.mapIt(it.file), true)
 
-  let install: seq[tuple[name: string, file: string, mode: string]] = packages
-    .distribute(packages.len /% 3)
-    .map(l => (l[0], l[1], l[2]))
-
-  if uid >= 0 and gid >= 0:
-    for pkg in install:
-      let index = pkg.file.rfind("/")
-      let name = if index >= 0: pkg.file[index + 1 .. ^1] else: pkg.file
-      for (source, dest) in [(pkg.file, destination & "/" & name),
-          (pkg.file & ".sig", destination & "/" & name & ".sig")]:
-        copyPreserved(source, dest, uid, gid)
-
-  let asexplicit = install.filter(p => p.mode == "explicit").map(p => p.name)
-  let asdeps = install.filter(p => p.mode == "dependency").map(p => p.name)
-
-  let installCode = runCommand(upgradeCommand & "--" & install.map(p => p.file), true)
-
-  let asexplicitCode = if asexplicit.len > 0:
-      runCommand(databaseCommand & "--asexplicit" & "--" & asexplicit, false)
+  let explicitCode = if explicit.len > 0:
+      runCommand(command.database & "--asexplicit" & "--" & explicit, false)
     else:
       0
 
-  let asdepsCode = if asdeps.len > 0:
-      runCommand(databaseCommand & "--asdeps" & "--" & asdeps, false)
+  let depsCode = if deps.len > 0:
+      runCommand(command.database & "--asdeps" & "--" & deps, false)
     else:
       0
 
   if installCode != 0:
     installCode
-  elif asexplicitCode != 0:
-    asexplicitCode
+  elif explicitCode != 0:
+    explicitCode
   else:
-    asdepsCode
+    depsCode

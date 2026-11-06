@@ -42,13 +42,6 @@ type
     name: string
     file: string
 
-  InstallItem = object
-    ## Packages to install via the positional subprocess protocol.
-    ## Field order must stay in sync with the install helper.
-    name: string
-    file: string
-    mode: string
-
   BuildBasesRes = object
     results: seq[BuildResult]
     skipped: int
@@ -1226,13 +1219,13 @@ proc installGroupFromSources(config: Config; commonArgs: seq[Argument];
   let installParams = block:
     var p = config.sudoCommand
     p.add helperToolCommand("install")
-    p.add $helperProtocol
-    p.add [cacheDir, $cacheUser, $cacheGroup, $pacmanUpgradeParams.len]
-    p.add pacmanUpgradeParams
-    p.add $pacmanDatabaseParams.len
-    p.add pacmanDatabaseParams
-    for i in installWithReason:
-      p.add [i.name, i.file, i.mode]
+    p.add encodeInstall(InstallCommand(
+      destination: cacheDir,
+      uid: cacheUser,
+      gid: cacheGroup,
+      upgrade: pacmanUpgradeParams,
+      database: pacmanDatabaseParams,
+      items: installWithReason))
     p
 
   let code = forkWait(() => execResult(installParams))
