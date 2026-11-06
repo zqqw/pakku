@@ -1226,6 +1226,7 @@ proc installGroupFromSources(config: Config; commonArgs: seq[Argument];
   let installParams = block:
     var p = config.sudoCommand
     p.add helperToolCommand("install")
+    p.add $helperProtocol
     p.add [cacheDir, $cacheUser, $cacheGroup, $pacmanUpgradeParams.len]
     p.add pacmanUpgradeParams
     p.add $pacmanDatabaseParams.len

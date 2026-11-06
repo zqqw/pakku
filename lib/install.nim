@@ -1,6 +1,6 @@
 import
   os, posix, sequtils, strutils, sugar
-import ../src/i18n
+import ../src/[helperproto, i18n]
 when not declared(system.stdout): import std/syncio
 
 proc splitCommands(params: seq[string], index: int, res: seq[seq[string]]): seq[seq[string]] =
@@ -43,15 +43,22 @@ proc take(params: seq[string], start: int, count: int): (seq[string], int) =
   let res = params[start .. start + count - 1]
   (res, start + count)
 
-proc warn(message: string): void =
-  ## Reports a non-fatal problem. The helper inherits pakku's streams, so this
-  ## appears next to pacman's output instead of aborting the installation. The
-  ## prefix comes from pacman's catalogue, matching `printWarning` in the parent.
+proc report(level: string; message: string) =
   try:
-    stderr.writeLine(trp"warning: ", message)
+    stderr.writeLine(level, message)
     stderr.flushFile()
   except CatchableError:
     discard
+
+proc warn(message: string) =
+  ## Reports a non-fatal problem. The helper inherits pakku's streams, so this
+  ## appears next to pacman's output instead of aborting the installation. The
+  ## prefix comes from pacman's catalogue, matching `printWarning` in the parent.
+  report(trp"warning: ", message)
+
+proc fail(message: string) =
+  ## Reports a problem that aborts this helper invocation.
+  report(trp"error: ", message)
 
 proc isSameFile(a, b: string): bool =
   ## True when both paths exist and refer to the same file. `sameFile` raises
@@ -81,7 +88,16 @@ proc copyPreserved(source, dest: string; uid, gid: int): void =
   discard chown(cstring(dest), (Uid) uid, (Gid) gid)
 
 proc handleInstall*(params: seq[string]): int =
-  let (head, headIndex) = params.take(0, 3)
+  ## The first argument is the protocol version. A helper left over from an
+  ## older pakku would otherwise read the same layout with the old meaning and
+  ## copy files before failing, or silently keep old behaviour.
+  let got = if params.len > 0: params[0] else: ""
+  if got != $helperProtocol:
+    fail(tr("install helper speaks protocol $#, pakku sent '$#'; " &
+      "reinstall pakku") % [$helperProtocol, got])
+    return 1
+
+  let (head, headIndex) = params.take(1, 3)
   let destination = head[0]
   let uid = head[1].parseInt
   let gid = head[2].parseInt
