@@ -4,7 +4,6 @@ import
     options,
     os,
     random,
-    re,
     sequtils,
     sets,
     strutils,
@@ -225,9 +224,8 @@ proc formatHtml(content: XmlNode): string =
       ("&apos;", "'"),
     )
     # remove tags
-    .replace(re"<.*?>", "")
-    # multiple spaces become 1 space
-    .replace(re"\ {2,}", " ")
+    .stripHtmlTags
+    .replaceRuns({' '}, 2, " ")
     # strip and wrap lines
     .strip
     .split("\n")
@@ -235,7 +233,7 @@ proc formatHtml(content: XmlNode): string =
     .foldl(a & "\n" & b)
     .strip
     # don't allow more than 2 line breaks
-    .replace(re"\n{2,}", "\n\n")
+    .replaceRuns({'\n'}, 2, "\n\n")
 
 proc parseCommentsContent(content: XmlNode): seq[CommentContent] =
   ## Scraps the `content` tree to find comments. This assumes two things:
@@ -251,7 +249,10 @@ proc parseCommentsContent(content: XmlNode): seq[CommentContent] =
   for a in content.findAll "h4":
     var name, date: string
     if a.innerText.scanf("$* commented on $*", name, date):
-      date = date.replace(re"\s{2,}", " ")
+      # the old expression was `re"\s{2,}"`, so the class is all whitespace,
+      # not just spaces and tabs -- dates scraped from `innerText` can hold
+      # newlines
+      date = date.replaceRuns(Whitespace, 2, " ")
       meta.add (strip name, strip date)
 
   var data = newSeq[string]()
