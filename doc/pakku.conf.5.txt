@@ -12,7 +12,12 @@ Synopsis
 Description
 -----------
 This configuration file uses a similar format to pacman.conf. The file is
-divided into sections. Only options section is used.
+divided into sections. Only options section is used. A '#' begins a comment
+when it starts a line or follows whitespace, so a comment may also terminate
+an option's line. Flag options accept an optional value (`true`, `yes`, `1`,
+`false`, `no`, `0`); a flag without a value is enabled. Values of options that
+list alternatives must be spelled exactly as shown. Unknown options, unknown
+values and unparsable flag values are reported as errors.
 
 Options
 -------
