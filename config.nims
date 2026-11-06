@@ -43,6 +43,11 @@ task build, "development debug build":
       extra.add arg
   selfExec("c " & extra.join(" ") & " -o:pakku src/main.nim")
 
+task test, "compile and run every test file in tests/":
+  for file in listFiles("tests"):
+    if file.endsWith(".nim") and splitFile(file).name.startsWith("t"):
+      exec "nim c --verbosity:0 --hints:off -r " & file
+
 task testmakefile, "run Makefile smoke tests":
   let destdir = getTempDir() / "pakku-makefile-test"
   let overriddenPrefix = "/usr"

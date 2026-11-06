@@ -13,7 +13,10 @@ import
     osproc,
     streams,
     strtabs
-  ]
+  ],
+  i18n,
+  helperproto
+export i18n, helperproto
 
 var firstCreatedTmpDir*: string
 
@@ -66,26 +69,6 @@ const
   pacmanCmd* = "/usr/bin/pacman"
   makepkgCmd* = "/usr/bin/makepkg"
 
-proc helperToolCommand*(tool: string): seq[string] =
-  ## Resolve a helper tool command.
-  ##
-  ## Prefer the installed helper symlink in `pkgLibDir`.
-  ## When pakku runs from a development environment, falls back
-  ## to the local `lib/tools` wrapper and passes the helper name as argv[1].
-  let installedTool = pkgLibDir / tool
-  if fileExists(installedTool):
-    return @[installedTool]
-
-  let appDir = getAppFilename().parentDir()
-  let fallbackTools = @[
-    appDir / "lib" / "tools",
-    appDir.parentDir() / "lib" / "tools"
-  ]
-  for toolsPath in fallbackTools:
-    if fileExists(toolsPath):
-      return @[toolsPath, tool]
-  @[installedTool]
-
 template haltError*(exitCode: int): untyped =
   var e: ref HaltError
   new(e)
@@ -100,6 +83,30 @@ template commandError*(message: string, colorNeeded: Option[bool] = none(bool),
   e.color = colorNeeded
   e.error = showError
   e
+
+proc helperToolCommand*(tool: string): seq[string] =
+  ## Resolve a helper tool command.
+  ##
+  ## Prefer the installed helper symlink in `pkgLibDir`.
+  ## When pakku runs from a development environment, falls back
+  ## to the local `lib/tools` wrapper and passes the helper name as argv[1].
+  ##
+  ## A missing helper is fatal here rather than at `exec`: running a path that
+  ## does not exist fails as a bare `perror` once the build is already done.
+  let installedTool = pkgLibDir / tool
+  if fileExists(installedTool):
+    return @[installedTool]
+
+  let appDir = getAppFilename().parentDir()
+  let fallbackTools = @[
+    appDir / "lib" / "tools",
+    appDir.parentDir() / "lib" / "tools"
+  ]
+  for toolsPath in fallbackTools:
+    if fileExists(toolsPath):
+      return @[toolsPath, tool]
+  raise commandError(tr("helper tool '$#' not found (expected $#); " &
+    "run 'make lib/tools' or reinstall pakku") % [tool, installedTool])
 
 iterator items*[T](self: Option[T]): T {.raises: [].} =
   if self.isSome:
@@ -301,11 +308,13 @@ proc setgroups*(size: csize_t, groups: ptr cint): cint
 proc getUser(uid: int): User =
   var pw = getpwuid(Uid(uid))
   if pw == nil:
-    raise newException(CatchableError, "")
+    raise newException(CatchableError,
+      tr("cannot resolve the user with uid $#" % $uid))
   var groups: array[100, cint]
   var ngroups: cint = 100
   if getgrouplist(pw.pw_name, pw.pw_gid, addr(groups[0]), ngroups) < 0:
-    raise newException(CatchableError, "")
+    raise newException(CatchableError,
+      tr("cannot read the group list of '$#'" % $pw.pw_name))
   else:
     let groupsSeq = groups[0 .. ngroups - 1].map(x => x.int)
     let res = ($pw.pw_name, pw.pw_uid.int, pw.pw_gid.int, groupsSeq,
@@ -374,14 +383,14 @@ proc execRedirect*(args: varargs[string]): int =
           continue
         envs[key] = value
       if envs == nil:
-        echo "Error: failed to drop privileges"
+        echo trp"error: ", tr"failed to drop privileges"
         return -1
   discard close(fd[0])
   argSeq.delete(0)
   try:
     p = startProcess(command = args[0], args = argSeq, env = envs, options = {poStdErrToStdOut, poUsePath})
   except CatchableError:
-    echo "Error: " & getCurrentExceptionMsg()
+    echo trp"error: ", getCurrentExceptionMsg()
     return -1
   var outp = outputStream(p)
   close(inputStream(p))
@@ -523,39 +532,21 @@ proc removeTmpDirQuiet*(s: string) =
   except CatchableError:
     discard
 
-const bashSpecialCharacters = " \t\"'`()[]{}#&|;!\\*~<>?"
+const bashSpecialChars = {' ', '\t', '"', '\'', '`', '(', ')', '[', ']', '{', '}',
+  '#', '&', '|', ';', '!', '\\', '*', '~', '<', '>', '?', '$'}
 
 proc bashEscape*(s: string): string =
   result = ""
   for c in s:
-    if c in bashSpecialCharacters:
+    if c in bashSpecialChars:
       result &= "\\" & c
-    elif c == "\n"[0]:
+    elif c == '\n':
       result &= "$'\\n'"
-    elif c.cuint < 0x20.cuint or c.cuint > 0x80.cuint:
-      result &= "$'\\0x" & c.uint8.toHex & "'"
+    elif c < ' ' or c >= '\x80':
+      ## Bytes outside printable ASCII go through `$'\xNN'`. `\0xNN` starts
+      ## with an octal NUL, and bash then evaluates the whole quoted segment to
+      ## an empty string, dropping the byte from the value.
+      result &= "$'\\x" & c.uint8.toHex & "'"
     else:
       result &= c
 
-proc dgettext(domain: cstring, s: cstring): cstring
-  {.cdecl, importc: "dgettext".}
-
-proc gettext(domain: string, s: string): string =
-  let translated = dgettext(domain, s)
-  if translated != nil: $translated else: s
-
-proc gettextHandle(domain: string, s: string): string =
-  let res = gettext(domain, s).replace("%s", "$#").replace("%c", "$#")
-  if res.len > 0 and res[^1 .. ^1] == "\n": res[0 .. ^2] else: res
-
-template tr*(s: string): string =
-  gettext("pakku", s)
-
-template trp*(s: string): string =
-  gettextHandle("pacman", s)
-
-template tra*(s: string): string =
-  gettextHandle("libalpm", s)
-
-template trc*(s: string): string =
-  gettextHandle("libc", s)

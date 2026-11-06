@@ -42,13 +42,6 @@ type
     name: string
     file: string
 
-  InstallItem = object
-    ## Packages to install via the positional subprocess protocol.
-    ## Field order must stay in sync with the install helper.
-    name: string
-    file: string
-    mode: string
-
   BuildBasesRes = object
     results: seq[BuildResult]
     skipped: int
@@ -496,16 +489,31 @@ func cleanupSpecForFailure(kind: FailureKind; config: Config;
       removeArchives: false,
       nukeTmpPrefix: false)
 
+proc removeArchive(file: string) =
+  ## Removes a package archive together with its makepkg signature sidecar.
+  for path in [file, file & ".sig"]:
+    try: removeFile(path)
+    except CatchableError: discard
+
 proc cleanupArtifacts(config: Config; artifacts: InstallArtifacts;
-    savedTo: string; spec: CleanupSpec) =
+    spec: CleanupSpec) =
   ## Removes or retains built package archives according to spec.
   ## Non-install-target files (e.g. split-package siblings) are always removed.
+  ## The retained locations are reported per artifact directory, since a reused
+  ## archive may not live in the directory the build would have written to.
+  var retainedDirs: seq[string]
+  var seenDirs = initHashSet[string]()
   for a in artifacts.artifacts:
     if spec.removeArchives or a.file notin artifacts.installFiles:
-      try: removeFile(a.file)
-      except CatchableError: discard
-  if not spec.removeArchives and savedTo.len > 0:
-    printWarning(config.color, tr"packages are saved to '$#'" % [savedTo])
+      removeArchive(a.file)
+    else:
+      let dir = a.file.parentDir
+      if dir.len > 0 and dir notin seenDirs:
+        seenDirs.incl dir
+        retainedDirs.add dir
+  if not spec.removeArchives:
+    for dir in retainedDirs:
+      printWarning(config.color, tr"packages are saved to '$#'" % [dir])
 
 proc printUnsatisfied(config: Config;
     satisfied: Table[PackageReference, SatisfyResult];
@@ -622,7 +630,9 @@ proc findArtifactsInDir(config: Config; dir: string;
   for (kind, path) in walkDir(dir):
     if kind == pcFile:
       for stem in artifactStemFromFilename(path.extractFilename, extGlob):
-        if stem in expected and stem notin fileTable:
+        ## Matching is by name only, so an archive that an interrupted write or
+        ## a full disk left empty would otherwise be handed to pacman as-is.
+        if stem in expected and stem notin fileTable and getFileSize(path) > 0:
           fileTable[stem] = path
 
   var artifacts = newSeq[BuildArtifact]()
@@ -1163,18 +1173,18 @@ proc installGroupFromSources(config: Config; commonArgs: seq[Argument];
     "incomplete results expected when build failed"
 
   if build.code != 0:
-    cleanupArtifacts(config, artifacts, savedTo, failureSpec)
+    cleanupArtifacts(config, artifacts, failureSpec)
     return InstallGroupRes(code: build.code)
 
   if artifacts.install.len == 0:
     assert build.code == 0
     assert build.results.len == 0, "build produced no install targets"
-    cleanupArtifacts(config, artifacts, savedTo, successSpec)
+    cleanupArtifacts(config, artifacts, successSpec)
     return InstallGroupRes(code: 0)
 
   if currentUser.uid != 0 and printColonUserChoice(config.color,
       tr"Continue installing?", ['y', 'n'], 'y', 'n', noconfirm, 'y') != 'y':
-    cleanupArtifacts(config, artifacts, savedTo, successSpec)
+    cleanupArtifacts(config, artifacts, successSpec)
     return InstallGroupRes(code: 1)
 
   let installWithReason = withAlpmConfig(config, false, handle, dbs, errors):
@@ -1211,23 +1221,24 @@ proc installGroupFromSources(config: Config; commonArgs: seq[Argument];
   let installParams = block:
     var p = config.sudoCommand
     p.add helperToolCommand("install")
-    p.add [cacheDir, $cacheUser, $cacheGroup, $pacmanUpgradeParams.len]
-    p.add pacmanUpgradeParams
-    p.add $pacmanDatabaseParams.len
-    p.add pacmanDatabaseParams
-    for i in installWithReason:
-      p.add [i.name, i.file, i.mode]
+    p.add encodeInstall(InstallCommand(
+      destination: cacheDir,
+      uid: cacheUser,
+      gid: cacheGroup,
+      upgrade: pacmanUpgradeParams,
+      database: pacmanDatabaseParams,
+      items: installWithReason))
     p
 
   let code = forkWait(() => execResult(installParams))
   if code != 0:
     # Pacman failed: preserve artifacts so the user can inspect or retry.
     let installFailureSpec = cleanupSpecForFailure(installFailure, config, archivesOutsideTmp)
-    cleanupArtifacts(config, artifacts, savedTo, installFailureSpec)
+    cleanupArtifacts(config, artifacts, installFailureSpec)
     return InstallGroupRes(code: code)
 
   tagBuiltBases(config, basePackages, artifacts.builtBases)
-  cleanupArtifacts(config, artifacts, savedTo, successSpec)
+  cleanupArtifacts(config, artifacts, successSpec)
 
   InstallGroupRes(canonicalRenames: artifacts.renames, code: 0)
 
