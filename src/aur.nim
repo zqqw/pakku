@@ -6,7 +6,6 @@ import
     random,
     sequtils,
     sets,
-    strutils,
     sugar,
     tables
   ],
@@ -180,9 +179,10 @@ proc findAurPackages*(query: seq[string], repo: string, useTimeout: bool):
                 x
 
           let filteredRpcInfos = if query.len > 1: (block:
-              let queryLow = query[1 .. ^1].map(q => q.toLowerAscii)
-              rpcInfos.filter(i => queryLow.map(q => i.name.toLowerAscii.contains(q) or
-                i.description.map(d => d.toLowerAscii.contains(q)).get(false)).foldl(a and b)))
+              let terms = query[1 .. ^1]
+              rpcInfos.filter(i => terms.all(q =>
+                i.name.containsIgnoreCase(q) or
+                i.description.map(d => d.containsIgnoreCase(q)).get(false))))
             else:
               rpcInfos
 

@@ -449,13 +449,9 @@ func cleanFragment(s: string; start, stop: int): string =
 
 func parseMeta(text: string; start, stop: int; author, date: var string): bool =
   ## Splits `<author> commented on <date>` using the last marker occurrence.
-  let first = stop - CommentMarker.len
-  var marker = -1
-  if first >= start:
-    for i in countdown(first, start):
-      if text.continuesWith(CommentMarker, i):
-        marker = i
-        break
+  let marker = if stop > start:
+      text.rfind(CommentMarker, start, stop - 1)
+    else: -1
   if marker < 0: return false
   author.setLen(0)
   date.setLen(0)

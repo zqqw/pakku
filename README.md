@@ -4,12 +4,10 @@ Pakku is a pacman wrapper with additional features, such as AUR support.
 
 ## Description
 
-Pakku is the creation of [kitsunyan](https://github.com/kitsunyan) who is busy
-creating new projects at present, so, for now at least:
-
-[pakku](https://aur.archlinux.org/packages/pakku/) is maintained by Pakku users
-and the Nim community. If you encounter issues with Pakku please open an issue
-here. Pull requests for improvements or bug fixes are welcomed!
+Pakku is the creation of [kitsunyan](https://github.com/kitsunyan), now
+maintained by Pakku users and the Nim community. Open issues here:
+<https://github.com/zqqw/pakku/issues>. Pull requests for improvements or bug
+fixes are welcomed!
 
 ## Features
 
@@ -20,7 +18,7 @@ Basically, Pakku supports the following features:
 - Building packages from official repositories
 - Removing make dependencies after building
 - Searching and querying AUR packages
-- Reading comments for AUR packages
+- Reading the first page of comments for AUR packages
 - PKGBUILD retrieving
 - Pacman integration
 
@@ -32,7 +30,7 @@ The following principles were the basis of the program:
 - Pacman options support (`--asdeps`, `--needed`, etc)
 - Pacman configuration support (output settings, ignored packages, etc)
 - Download, ask all questions, and only after that start building
-- No PKGBUILD sourcing
+- No PKGBUILD sourcing during builds; version detection sources it in a helper subprocess
 
 ## Examples
 
@@ -54,8 +52,9 @@ For more advanced build options check the
 
 - Pakku has color! To enable it, just enable
 [color for Pacman](https://wiki.archlinux.org/title/Color_output_in_console#pacman).
-- Pakku has out of the box support for [doas](https://wiki.archlinux.org/title/Doas)!
-  To use something other than `sudo` or `doas`, check the `PreferredSudoCommand` configuration option.
+- Pakku has out of the box support for [sudo](https://wiki.archlinux.org/title/Sudo),
+  [doas](https://wiki.archlinux.org/title/Doas) and `su`!
+  To choose one, check the `PreferredSudoCommand` configuration option.
 - Don't forget to read the `pakku(8)` and `pakku.conf(5)` man pages to read the
 full list of features!
 
@@ -69,3 +68,7 @@ unless distro specific support is included:
 
 Managing, searching and updating binary packages along with AUR packages will
 function correctly.
+
+## License
+
+Pakku is licensed under GPL-3.0-only; see `COPYING`.

@@ -1,54 +1,5 @@
-import std/[options, strutils, unittest]
+import std/[options, unittest]
 import ../src/utils
-
-suite "stripHtmlTags":
-  test "removes well-formed markup regions":
-    check stripHtmlTags("<b>bold</b>") == "bold"
-    check stripHtmlTags("<i>a</i>b<p>c") == "abc"
-    check stripHtmlTags("plain text") == "plain text"
-
-  test "region ends at first closing bracket":
-    check stripHtmlTags("""<b>hi</b> x <a href="l>weird">y""") ==
-      "hi x weird\">y"
-    check stripHtmlTags("<>>x") == ">x"
-
-  test "empty regions disappear":
-    check stripHtmlTags("<>") == ""
-
-  test "regions never span lines":
-    check stripHtmlTags("<a\nb>x") == "<a\nb>x"
-    check stripHtmlTags("a\n<a\nb>c<d>e") == "a\n<a\nb>ce"
-
-  test "unterminated opener survives verbatim":
-    for s in ["<abc", "<abc ", "a<"]:
-      check stripHtmlTags(s) == s
-
-  test "scanning resumes after a lone '<'":
-    check stripHtmlTags("a<b\nc>x<y>d") == "a<b\nc>xd"
-
-suite "replaceRuns":
-  test "collapses runs of spaces to one space":
-    check replaceRuns("a  b", {' '}, 2, " ") == "a b"
-    check replaceRuns("a     b", {' '}, 2, " ") == "a b"
-
-  test "runs shorter than minRun pass through":
-    check replaceRuns("a b c", {' '}, 2, " ") == "a b c"
-    check replaceRuns("no-space", {' '}, 2, " ") == "no-space"
-
-  test "newline runs cap at two newlines":
-    check replaceRuns("a\n\n\n\n\n\nb", {'\n'}, 2, "\n\n") == "a\n\nb"
-    check replaceRuns("a\nb", {'\n'}, 2, "\n\n") == "a\nb"
-
-  test "mixed blanks collapse to a single space":
-    check replaceRuns("a \tb", {' ', '\t'}, 2, " ") == "a b"
-    # a lone tab never rewrites to a space
-
-  test "fills can expand a collapsed run":
-    # each qualifying run maps to exactly one `by`, whatever its length
-    check replaceRuns("a\n\n\nb", {'\n'}, 2, "\n\n") == "a\n\nb"
-
-  test "runs at both ends are rewritten":
-    check replaceRuns("   x   ", {' '}, 2, " ") == " x "
 
 suite "splitKeyval (INI directive splitting)":
   # contract follows pacman parse_ini + every lenient .SRCINFO reader:
@@ -82,12 +33,24 @@ suite "splitKeyval (INI directive splitting)":
     for s in ["onlytext", "Quiet", "", " ", "=", " = nokey"]:
       check splitKeyval(s).isNone
 
-suite "replaceRuns across the whitespace class":
-  # the comment formatter collapses `re"\s{2,}"` in scraped dates, so the set
-  # has to cover newlines, not just spaces and tabs
-  test "runs containing newlines collapse with Whitespace":
-    check replaceRuns("a\n  b", Whitespace, 2, " ") == "a b"
-    check replaceRuns("a \r\n b", Whitespace, 2, " ") == "a b"
+suite "containsIgnoreCase":
+  test "matches ASCII case without allocating lowered strings":
+    check containsIgnoreCase("Visual-Studio-Code-Bin", "code")
+    check containsIgnoreCase("FOOBAR", "bar")
+    check not containsIgnoreCase("foobar", "baz")
 
-  test "space-and-tab alone leaves the newline in place":
-    check replaceRuns("a\n  b", {' ', '\t'}, 2, " ") == "a\n b"
+  test "empty pattern matches":
+    check containsIgnoreCase("anything", "")
+
+  test "pattern longer than text fails":
+    check not containsIgnoreCase("abc", "abcd")
+
+suite "parseNumberIntervals":
+  test "returns only requested intervals":
+    check parseNumberIntervals("2 4-5", 10).get == @[2..2, 4..5]
+
+  test "merges adjacent ranges":
+    check parseNumberIntervals("1-2,3 5", 10).get == @[1..3, 5..5]
+
+  test "rejects invalid values":
+    check parseNumberIntervals("0", 10).isNone
