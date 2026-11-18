@@ -433,9 +433,13 @@ proc execRedirect*(args: varargs[string]): int =
     iUser: User
     envs: StringTableRef = nil
 
-  if dPriv == true:
-    if initialUser.isSome:
-      iUser = initialUser.unsafeGet
+  # Drop privileges only when we know whose: without an initial user there is
+  # nothing to switch to, and building an environment from an empty User passes
+  # an EMPTY environment to the child, so `$HOME`, `$PATH` and everything else
+  # disappear. `resolveEffectivePkgdest` is the visible casualty: it sources
+  # makepkg.conf, where `PKGDEST=${HOME}/...` then expands to a path in `/`.
+  if dPriv == true and initialUser.isSome:
+    iUser = initialUser.unsafeGet
     envs = newStringTable(modeCaseSensitive)
     if iUser.name != "":
       var groups = iUser.groups.map(x => x.cint)
