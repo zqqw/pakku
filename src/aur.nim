@@ -6,32 +6,16 @@ import
     random,
     sequtils,
     sets,
-    strutils,
     sugar,
-    tables,
-    terminal,
-    strscans,
-    htmlparser,
-    xmltree,
-    wordwrap
+    tables
   ],
   ./package,
   ./utils,
   ./wrapper/curl,
+  ./aurcomments,
   ./format
 
-type
-  CommentContent = tuple[
-    author: string,
-    date: string,
-    text: string
-  ]
-  AurComment* = tuple[
-    author: string,
-    date: string,
-    text: string,
-    pinned: bool
-  ]
+export aurcomments.AurComment
 
 const
   aurUrl* = "https://aur.archlinux.org/"
@@ -195,9 +179,10 @@ proc findAurPackages*(query: seq[string], repo: string, useTimeout: bool):
                 x
 
           let filteredRpcInfos = if query.len > 1: (block:
-              let queryLow = query[1 .. ^1].map(q => q.toLowerAscii)
-              rpcInfos.filter(i => queryLow.map(q => i.name.toLowerAscii.contains(q) or
-                i.description.map(d => d.toLowerAscii.contains(q)).get(false)).foldl(a and b)))
+              let terms = query[1 .. ^1]
+              rpcInfos.filter(i => terms.all(q =>
+                i.name.containsIgnoreCase(q) or
+                i.description.map(d => d.containsIgnoreCase(q)).get(false))))
             else:
               rpcInfos
 
@@ -207,70 +192,6 @@ proc findAurPackages*(query: seq[string], repo: string, useTimeout: bool):
       except CurlError:
         (@[], some(getCurrentException().msg))
 
-proc formatHtml(content: XmlNode): string =
-  ## Transforms a HTML tree into a pleasant looking string to be printed
-  ## on the terminal
-  ($content).multiReplace(
-    # force line break
-      ("<br />", "\n"),
-    # paragraphs look like 2 line breaks
-      ("<p>", "\n\n"),
-      ("</p>", "\n\n"),
-    # replace mnemonics
-      ("&lt;", "<"),
-      ("&gt;", ">"),
-      ("&quot;", "\""),
-      ("&amp;", "&"),
-      ("&apos;", "'"),
-    )
-    # remove tags
-    .stripHtmlTags
-    .replaceRuns({' '}, 2, " ")
-    # strip and wrap lines
-    .strip
-    .split("\n")
-    .map(s => s.strip.wrapWords(maxLineWidth = terminalWidth()))
-    .foldl(a & "\n" & b)
-    .strip
-    # don't allow more than 2 line breaks
-    .replaceRuns({'\n'}, 2, "\n\n")
-
-proc parseCommentsContent(content: XmlNode): seq[CommentContent] =
-  ## Scraps the `content` tree to find comments. This assumes two things:
-  ##
-  ## * `h4` headers contain a comment author and date with the format
-  ##   "<author> commented on <date>"
-  ## * The content of a comment is inside a `div` with a class attribute
-  ##   containing "article-content"
-  ##
-  ## If any of this two suppositions is no longer valid, the parsing won't work.
-  var meta = newSeq[(string, string)]()
-
-  for a in content.findAll "h4":
-    var name, date: string
-    if a.innerText.scanf("$* commented on $*", name, date):
-      # the old expression was `re"\s{2,}"`, so the class is all whitespace,
-      # not just spaces and tabs -- dates scraped from `innerText` can hold
-      # newlines
-      date = date.replaceRuns(Whitespace, 2, " ")
-      meta.add (strip name, strip date)
-
-  var data = newSeq[string]()
-  for a in content.findAll "div":
-    if "article-content" in a.attr("class"):
-      data.add(formatHtml a)
-
-  for (m, d) in zip(meta, data):
-    result.add (m[0], m[1], d)
-
-proc parseComments(content: XmlNode): seq[AurComment] =
-  for a in content.findAll("div"):
-    if "package-comments" in a.attr("class"):
-      let
-        commentContent = parseCommentsContent(a)
-        pinned = "Pinned Comments" in a.innerText
-      for c in commentContent:
-        result.add (c.author, c.date, c.text, pinned)
 
 proc downloadAurComments*(base: string): (seq[AurComment], Option[string]) =
   let (content, error) = withAur():
@@ -284,8 +205,6 @@ proc downloadAurComments*(base: string): (seq[AurComment], Option[string]) =
   if error.isSome:
     (@[], error)
   else:
-    let
-      tree = parseHtml(content)
-      comments = tree.parseComments()
+    let comments = parseAurComments(content)
 
     (comments, none(string))
