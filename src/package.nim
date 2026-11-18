@@ -1,5 +1,5 @@
 import
-  options, os, re, sequtils, sets, strutils, sugar, tables, utils,
+  options, os, sequtils, sets, strutils, sugar, tables, utils,
   "wrapper/alpm"
 when not declared(system.stdout): import std/syncio
 
@@ -70,7 +70,7 @@ type
     git: GitRepo
   ]
 
-  SrcInfoPair = tuple[key: string, value: string]
+  SrcInfoPair = KeyvalPair
 
 const
   packageRepos: seq[PackageRepo] = @[
@@ -227,30 +227,87 @@ template toPackageReference*(pkg: ptr AlpmPackage): PackageReference =
 template toPackageReference*(pkg: RpcPackageInfo): PackageReference =
   (pkg.name, none(string), some((ConstraintOperation.eq, pkg.version, false)))
 
-proc parsePackageReference*(name: string, withDescription: bool): PackageReference =
-  var matches: array[3, string]
+func splitVersionConstraint*(depstring: string):
+    tuple[name: string, operation: Option[ConstraintOperation], version: string] =
+  ## Splits a dependency string into `(name, operation, version)`, following
+  ## libalpm's `alpm_dep_from_string` (deps.c): `<` outranks `>` which outranks
+  ## `=`, independently of position, and the operator widens to its two-char
+  ## form when `=` directly follows. Name is everything before the operator and
+  ## may be empty; version is the remainder. Descriptions ("pkg >= 1: some
+  ## description") are expected to be split by the caller already, as
+  ## `parsePackageReference` does.
+  let ltPos = depstring.find('<')
+  let gtPos = depstring.find('>')
 
+  var opStart: int
+  var operation: ConstraintOperation
+  var opLen = 1
+
+  if ltPos != -1:
+    opStart = ltPos
+    if ltPos + 1 <= depstring.high and depstring[ltPos + 1] == '=':
+      operation = ConstraintOperation.le
+      opLen = 2
+    else:
+      operation = ConstraintOperation.lt
+  elif gtPos != -1:
+    opStart = gtPos
+    if gtPos + 1 <= depstring.high and depstring[gtPos + 1] == '=':
+      operation = ConstraintOperation.ge
+      opLen = 2
+    else:
+      operation = ConstraintOperation.gt
+  else:
+    opStart = depstring.find('=')
+    if opStart == -1:
+      return (depstring, none(ConstraintOperation), "")
+    operation = ConstraintOperation.eq
+
+  result = (depstring[0 ..< opStart], some(operation),
+    depstring[(opStart + opLen)..^1])
+
+func toConstraint(operation: ConstraintOperation;
+    version: string): VersionConstraint =
+  (operation: operation, version: version, impliedVersion: false)
+
+proc parsePackageReference*(name: string, withDescription: bool): PackageReference =
+  ## Parses an AUR/pacman dependency reference of the form
+  ## `"name[<op>version][: description]"`. The description separator is
+  ## `": "` (two characters, the same guard libalpm uses to avoid confusing
+  ## an epoch colon); splitting of name/operator/version delegates to
+  ## `splitVersionConstraint`, which mirrors libalpm exactly.
   let descIndex = name.find(": ")
-  let (description, workName) = if withDescription and descIndex >= 0:
+  let (description, depstring) = if withDescription and descIndex >= 0:
       (some(name[descIndex + 2 .. ^1]), name[0 .. descIndex - 1])
     else:
       (none(string), name)
 
-  if workName.match(re"([^><=]*)\ *(=|>=|<=|>|<)\ *([^ ]*)", matches):
-    let constraints = toSeq(enumerate[ConstraintOperation]())
-    let index = constraints.map(s => $s).find(matches[1])
+  let (pkgName, operation, constraintVersion) = depstring.splitVersionConstraint()
 
-    if index >= 0:
-      (matches[0], description, some((constraints[index], matches[2], false)))
+  let constraint = if operation.isSome:
+      some(toConstraint(operation.unsafeGet, constraintVersion))
     else:
-      (matches[0], description, none(VersionConstraint))
-  else:
-    (workName, description, none(VersionConstraint))
+      none(VersionConstraint)
+  (pkgName, description, constraint)
 
-proc parseSrcInfoKeys(srcInfo: string):
+func parseSrcInfoLine*(line: string): Option[SrcInfoPair] =
+  ## Reads one `.SRCINFO` directive under the same lenient contract every
+  ## ecosystem consumer applies (split at first `'='`, trim both sides).
+  ## Keys are additionally restricted to `[A-Za-z0-9_]+`, matching the
+  ## PKGBUILD variable schema those directives are generated from.
+  let kv = line.splitKeyval()
+  if kv.isSome and kv.unsafeGet.key.allCharsInSet(IdentChars):
+    kv
+  else:
+    none(SrcInfoPair)
+
+proc parseSrcInfoKeys*(srcInfo: string):
   tuple[baseSeq: ref seq[SrcInfoPair], table: OrderedTable[string, ref seq[SrcInfoPair]]] =
+  ## Splits a `.SRCINFO` body into per-pkgname pair lists. The accepted line
+  ## shape is `parse_ini`'s, not the old pattern's: split at the first `'='`
+  ## and trim both halves, so `key=value`, `key   =   value` and tab-separated
+  ## forms are accepted too.
   var table = initOrderedTable[string, ref seq[SrcInfoPair]]()
-  var matches: array[2, string]
   var baseSeq: ref seq[SrcInfoPair]
   var values: ref seq[SrcInfoPair]
 
@@ -258,9 +315,10 @@ proc parseSrcInfoKeys(srcInfo: string):
   baseSeq[] = newSeq[SrcInfoPair]()
 
   for line in srcInfo.splitLines:
-    if line.match(re"[\t\ ]*(\w+)\ =\ (.*)", matches):
-      let key = matches[0]
-      let value = strip(matches[1])
+    let kv = parseSrcInfoLine(line)
+    if kv.isSome:
+      let (key, rawValue) = kv.unsafeGet
+      let value = strip(rawValue)
 
       if key == "pkgbase":
         values = baseSeq
@@ -276,6 +334,7 @@ proc parseSrcInfoKeys(srcInfo: string):
         values[] &= (key: key, value: value)
 
   (baseSeq: baseSeq, table: table)
+
 
 proc parseSrcInfoName(repo: string, name: string, baseIndex: int, baseCount: int,
   rpcInfos: seq[RpcPackageInfo], baseSeq: ref seq[SrcInfoPair], nameSeq: ref seq[SrcInfoPair],
@@ -298,10 +357,11 @@ proc parseSrcInfoName(repo: string, name: string, baseIndex: int, baseCount: int
       .map(n => parsePackageReference(n, true))
       .filter(c => c.name.len > 0)
 
+
   proc filterReferences(references: seq[PackageReference],
     filterWith: seq[PackageReference]): seq[PackageReference] =
     references.filter(r => filterWith.filter(w => r.isProvidedBy(w, true)).len == 0)
-  
+
   let base = optLast:
     collect(newSeq):
       for x in baseSeq[]:
