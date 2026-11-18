@@ -31,10 +31,6 @@ proc runCommand(params: seq[string], inputOutput: bool): int =
   else:
     0
 
-proc take(params: seq[string], start: int, count: int): (seq[string], int) =
-  let res = params[start .. start + count - 1]
-  (res, start + count)
-
 proc report(level: string; message: string) =
   try:
     stderr.writeLine(level, message)

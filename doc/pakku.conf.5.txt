@@ -60,8 +60,8 @@ Options
 	than those found in remote repositories.
 
 *SudoExec*::
-	Automatically exec the program from root via sudo if it is necessary,
-	allowing you to enter password for sudo only once.
+	Automatically exec the program from root via the configured privilege
+	helper if it is necessary, allowing one password prompt.
 
 *ViewNoDefault*::
 	When building from AUR, pakku will ask whether you want to view the
@@ -74,14 +74,14 @@ Options
 	removed on failure.
 
 *KeepBuiltPackagesOnFailure*::
-	When enabled, pakku preserves built package archives in the staging
-	directory when a build fails. By default archives are removed on
-	build failure.
+	When enabled, pakku preserves built package archives where they were
+	written (+PackageOutputDir+ or the staging directory) when a build fails.
+	By default archives are removed on build failure.
 
 *PreserveBuilt =* Internal | User | Pkgdest | Disabled::
 	Where to copy built packages before invoking pacman. If set to
 	Internal, packages are copied to the pacman cache directory. If set
-	to User, packages are copied to +UserCacheDir+. If set to Pkgdest,
+	to User, packages are copied to +${UserCacheDir}/packages+. If set to Pkgdest,
 	packages are copied to the PKGDEST configured in the user's
 	linkman:makepkg.conf[5]. If set to Disabled (the default), no copy
 	is performed.
@@ -100,7 +100,7 @@ Options
 	allowing you to modify PKGBUILD or perform other necessary actions.
 
 *PreferredSudoCommand =* command::
-	This is the command that will be used to escalate priviliges. If the option is
+	This is the command that will be used to escalate privileges. If the option is
 	not set or the command is not found on the system, pakku will try to guess the
 	command between sudo, doas and su.
 

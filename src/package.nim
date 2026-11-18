@@ -143,7 +143,7 @@ proc readOsId: Option[string] =
     try:
       while true:
         let rawLine = readLine(file)
-        if rawLine[0 .. 2] == "ID=":
+        if rawLine.startsWith("ID="):
           return some(rawLine[3 .. ^1])
     except EOFError:
       discard
@@ -239,20 +239,24 @@ func splitVersionConstraint*(depstring: string):
   let ltPos = depstring.find('<')
   let gtPos = depstring.find('>')
 
-  var opStart: int
-  var operation: ConstraintOperation
-  var opLen = 1
+  var
+    opStart: int
+    operation: ConstraintOperation
+    opLen = 1
+
+  proc equalFollows(pos: int): bool =
+    pos + 1 <= depstring.high and depstring[pos + 1] == '='
 
   if ltPos != -1:
     opStart = ltPos
-    if ltPos + 1 <= depstring.high and depstring[ltPos + 1] == '=':
+    if equalFollows(ltPos):
       operation = ConstraintOperation.le
       opLen = 2
     else:
       operation = ConstraintOperation.lt
   elif gtPos != -1:
     opStart = gtPos
-    if gtPos + 1 <= depstring.high and depstring[gtPos + 1] == '=':
+    if equalFollows(gtPos):
       operation = ConstraintOperation.ge
       opLen = 2
     else:
@@ -307,9 +311,10 @@ proc parseSrcInfoKeys*(srcInfo: string):
   ## shape is `parse_ini`'s, not the old pattern's: split at the first `'='`
   ## and trim both halves, so `key=value`, `key   =   value` and tab-separated
   ## forms are accepted too.
-  var table = initOrderedTable[string, ref seq[SrcInfoPair]]()
-  var baseSeq: ref seq[SrcInfoPair]
-  var values: ref seq[SrcInfoPair]
+  var
+    table = initOrderedTable[string, ref seq[SrcInfoPair]]()
+    baseSeq: ref seq[SrcInfoPair]
+    values: ref seq[SrcInfoPair]
 
   new(baseSeq)
   baseSeq[] = newSeq[SrcInfoPair]()
@@ -317,8 +322,7 @@ proc parseSrcInfoKeys*(srcInfo: string):
   for line in srcInfo.splitLines:
     let kv = parseSrcInfoLine(line)
     if kv.isSome:
-      let (key, rawValue) = kv.unsafeGet
-      let value = strip(rawValue)
+      let (key, value) = kv.unsafeGet
 
       if key == "pkgbase":
         values = baseSeq
