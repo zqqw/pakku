@@ -1,73 +1,154 @@
 # pakku
 
-Pakku is a pacman wrapper with additional features, such as AUR support.
-
-## Description
+Pakku is a pacman wrapper with AUR support. It looks and behaves like pacman,
+then adds the AUR handling: search, review, build and install.
 
 Pakku is the creation of [kitsunyan](https://github.com/kitsunyan), now
 maintained by Pakku users and the Nim community. Open issues here:
-<https://github.com/zqqw/pakku/issues>. Pull requests for improvements or bug
-fixes are welcomed!
+<https://github.com/zqqw/pakku/issues>. Pull requests for improvements and bug
+fixes are welcome.
 
 ## Features
 
-Basically, Pakku supports the following features:
-
-- Installing packages from AUR
-- Viewing files and changes between builds
-- Building packages from official repositories
-- Removing make dependencies after building
+- Installing packages from the AUR and the official repositories
 - Searching and querying AUR packages
-- Reading the first page of comments for AUR packages
-- PKGBUILD retrieving
-- Pacman integration
+- Viewing PKGBUILDs, `.SRCINFO`, files and changes before building
+- Retrieving PKGBUILDs with `pakku -Sz`
+- Reading AUR comments with `AurComments`
+- Reusing built archives and keeping them under your own cleanup policy
+- Removing make dependencies after building
+- No PKGBUILD sourcing during builds. Version detection runs in a helper
+  subprocess.
 
-In other words, it does the same things any AUR helper is capable of.
+Pakku keeps most of the old habits:
 
-The following principles were the basis of the program:
+- Pacman-like user interface, options and configuration
+- Download everything, ask all the questions, and only then start building
+- `sudo`, `doas` and `su` work out of the box
 
-- Pacman-like user interface
-- Pacman options support (`--asdeps`, `--needed`, etc)
-- Pacman configuration support (output settings, ignored packages, etc)
-- Download, ask all questions, and only after that start building
-- No PKGBUILD sourcing during builds; version detection sources it in a helper subprocess
+## Compared with other AUR helpers
 
-## Examples
+✓ means built in. ✗ means absent. "manual" means the workflow allows it without
+helper support.
 
-- Build packages from sources: `pakku -S --build linux linux-headers`
-- Query all "dependency islands": `pakku -Qdttt`
+| | pakku | paru | yay | makepkg by hand |
+|---|---|---|---|---|
+| Binary size[^₁] | **0.87 MiB** | 7.53 MiB | 11.30 MiB | n/a |
+| Fetched libs[^₂] | **none** | 308 crates | 27 modules | PKGBUILD sources |
+| Review before build | ✓ | ✓ | ✓ | manual |
+| Skips rebuild when archive exists | ✓ exact match | ✓ `needs_build` | ✓ `ReBuild=no` | manual |
+| Artifact policy | **✓ output, copy, cleanup** | partial | partial | manual |
+| Removes make deps | ✓ | ✓ | ✓ | manual (`-r`) |
+| AUR comments | first page | all with `-cc` | ✗ | ✗ |
+| VCS rebuild on upgrade | ✗ | ✓ | ✓ | ✗ |
+| AUR download-only | ✗ | ✗ | ✓ | source download with `-o` |
+| Provider prompt | ✗ | ✓ | ✓ | ✗ |
+| sudoloop | ✗ | ✓ | ✓ | ✗ |
+| Arch news | ✗ | ✓ | ✓ | ✗ |
+| Strict config errors | **✓** | warns | partial | n/a |
+| Privileged install helper | **✓ bundled, fixed argv** | external sudo | external sudo | sudo |
+
+[^₁]: Sizes, 2026-11-19: pakku 9feb327, 911,472 B; paru 2.2.0, 7,899,440 B; yay 3a25046, 11,837,664 B.
+
+[^₂]: Pakku 9feb327 has no Nimble deps. Paru 2.2.1 `Cargo.lock`: 308 crates. Yay 3a25046 `go.mod`: 27 modules. Manual makepkg fetches PKGBUILD sources.
+
+## Gaps
+
+- AUR comments stop at the first page.
+- Archive reuse is filename-based and silent. There is no `--rebuild` switch.
+- No VCS rebuild on upgrade, multi-provider prompt, download-only mode, local PKGBUILD build, sudoloop or news integration.
+- Search output is not column-aligned and descriptions are not truncated.
+- On non-Arch-based distributions, `-Sz` works for AUR packages only and `-Sn` does not work.
 
 ## Installation
 
+Stable release from the AUR:
+
 ```shell
-$ git clone https://aur.archlinux.org/pakku.git
-$ cd pakku
-$ makepkg -si
+git clone https://aur.archlinux.org/pakku.git
+cd pakku
+makepkg -si
 ```
 
-For more advanced build options check the
-[wiki](https://github.com/zqqw/pakku/wiki/Building-and-modifying-pakku)!
+Latest development code:
+
+```shell
+git clone https://aur.archlinux.org/pakku-git.git
+cd pakku-git
+makepkg -si
+```
+
+Current source needs `pacman`, `libcurl.so` and `git` at runtime, plus `nim`,
+`git` and `asciidoc` to build.
+
+For more build options, see the
+[wiki](https://github.com/zqqw/pakku/wiki/Building-and-modifying-pakku).
+
+## Examples
+
+```shell
+pakku -Syu                       # sysupgrade, including the AUR
+pakku -S foo                     # install from repositories or the AUR
+pakku -S --build linux linux-headers
+pakku -Qdttt                     # all dependency islands
+```
+
 
 ## Some tips
 
-- Pakku has color! To enable it, just enable
-[color for Pacman](https://wiki.archlinux.org/title/Color_output_in_console#pacman).
-- Pakku has out of the box support for [sudo](https://wiki.archlinux.org/title/Sudo),
-  [doas](https://wiki.archlinux.org/title/Doas) and `su`!
-  To choose one, check the `PreferredSudoCommand` configuration option.
+- Pakku has color! Enable [color for Pacman](https://wiki.archlinux.org/title/Color_output_in_console#pacman) and it carries over.
+- Use `PreferredSudoCommand` to pick `sudo`, `doas` or `su`. `SudoExec` execs from root through that helper when needed, so you get one password prompt.
 - Don't forget to read the `pakku(8)` and `pakku.conf(5)` man pages to read the
 full list of features!
 
-## Distribution compatibility
+## Configuration
 
-Pakku should work with Arch based distros although some minor aspects may not,
-unless distro specific support is included:
+`/etc/pakku.conf` follows the `pacman.conf` format. `#` starts a comment at the
+start of a line or after whitespace. Unknown options, bad enum values and invalid
+flag values will produce errors.
 
-- `pakku -Sz` will only work with AUR packages
-- `pakku -Sn` (to build binary packages from source) won't work.
+Common switches:
 
-Managing, searching and updating binary packages along with AUR packages will
-function correctly.
+- `AurComments`, `CheckIgnored`, `PrintAurNotFound`, `PrintLocalIsNewer` for
+  comments and upgrade warnings.
+- `ViewNoDefault` asks before showing PKGBUILDs and other files.
+- `PreBuildCommand` runs in the package directory before the build. For example, `PreBuildCommand = customizepkg --modify` wires in customizepkg.
+
+## Built archives
+
+Pakku hands builds to makepkg and installs the resulting `*.pkg.tar.*` with pacman. By default, output lives in `TmpDir` and disappears after a successful install.
+
+| Want | Setting |
+|---|---|
+| Put makepkg output elsewhere | `PackageOutputDir = ${HOME}/.cache/pkgs` (create it first) |
+| Keep installed archives | `CleanupAfterInstall = Worktree` |
+| Keep the worktree too | `CleanupAfterInstall = None` |
+| Copy installed archives to pacman's cache | `PreserveBuilt = Internal` |
+| Copy installed archives to pakku's user cache | `PreserveBuilt = User` |
+| Copy installed archives to makepkg's `PKGDEST` | `PreserveBuilt = Pkgdest` |
+| Keep failed build output | `KeepBuildDirOnFailure`, `KeepBuiltPackagesOnFailure` |
+
+Defaults are `TmpDir` output, `CleanupAfterInstall = Full` and `PreserveBuilt = Disabled`. `Worktree` and `None` still remove unselected split-package siblings.
+
+Reuse looks in `PackageOutputDir` and the `PreserveBuilt` destination. Names must match exactly as `name-version-arch`, per package base. A changed PKGBUILD with the same version is reused. Delete the archive to rebuild it. Reuse is silent and all-or-nothing for the base.
+
+`Pkgdest` reads `PKGDEST` from `~/.config/pacman/makepkg.conf` before
+`/etc/makepkg.conf`. An exported `PKGDEST` wins. We do not advise using pacman's `CacheDir` as a shared build store as `pacman -Sc` and alpm downloads can prune or pollute it.
+
+## Building pakku
+
+```shell
+make                 # release binary, completions and man pages
+make src/pakku       # local binary only
+nim  test            # Nim test suites
+make releasecheck    # clean checkout must sit on the exact v${RVERSION} tag
+```
+
+`Version` in `config.nims` is the only number to bump. Release builds use it as is.
+
+## Contributing
+
+Please, keep pull requests small and single-purpose.
 
 ## License
 
