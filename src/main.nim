@@ -12,11 +12,12 @@ import
   "feature/syncsource"
 
 proc execSudo*(sudoPrefix: seq[string], args: seq[Argument]): int =
-  execResult(sudoPrefix & getAppFilename() & (block:collect(newSeq):
+  let appArgs = collect(newSeq):
     for y in args:
       for x in y.collectArg:
         x
-    ))
+  execResult(sudoExecArgs(sudoPrefix, getEnv(PreserveDirEnv), getAppFilename(),
+    appArgs))
 
 proc passValidation(
   args: seq[Argument], config: Config, nonRootArgs: openArray[OptionPair],

@@ -52,6 +52,15 @@ Configuration
 See linkman:pacman.conf[5] and linkman:pakku.conf[5] for details on configuring
 the program.
 
+Environment
+-----------
+*PAKKU_PRESERVE_DIR*::
+	Absolute path of an existing directory that receives copies of the archives
+	installed in this run. It replaces the destination selected by
+	+PreserveBuilt+ in linkman:pakku.conf[5] for this invocation only. The path
+	must lie outside the build output. Pakku never cleans the directory. The
+	value is passed through +SudoExec+ re-execution.
+
 See Also
 --------
 linkman:pacman[8], linkman:pacman.conf[5], linkman:pakku.conf[5]
