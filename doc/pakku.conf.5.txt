@@ -79,12 +79,17 @@ Options
 	By default archives are removed on build failure.
 
 *PreserveBuilt =* Internal | User | Pkgdest | Disabled::
-	Where to copy built packages before invoking pacman. If set to
-	Internal, packages are copied to the pacman cache directory. If set
-	to User, packages are copied to +${UserCacheDir}/packages+. If set to Pkgdest,
-	packages are copied to the PKGDEST configured in the user's
-	linkman:makepkg.conf[5]. If set to Disabled (the default), no copy
-	is performed.
+	Copies the archives selected for installation to a directory that outlives
+	the run, so a later install reuses them. Internal copies to pacman's cache
+	directory. Pakku holds a single cache path, so a repeated +CacheDir+
+	directive leaves only the last entry in effect. User copies to
+	+${UserCacheDir}/packages+. Pkgdest copies to the effective +PKGDEST+, where
+	an exported +PKGDEST+ wins over linkman:makepkg.conf[5]. An empty result is
+	a no-copy mode, not an error. Disabled is the default. The copy happens
+	after the install is confirmed and before pacman runs, so a cancelled
+	install leaves nothing behind, and the destination is also scanned for
+	reuse. +PAKKU_PRESERVE_DIR+ replaces the destination for one invocation, see
+	*ENVIRONMENT* in linkman:pakku[8].
 
 *CleanupAfterInstall =* Full | Worktree | None::
 	Controls cleanup of build artifacts and workspace after a successful
@@ -103,6 +108,47 @@ Options
 	This is the command that will be used to escalate privileges. If the option is
 	not set or the command is not found on the system, pakku will try to guess the
 	command between sudo, doas and su.
+
+Package and build policies
+--------------------------
+Pakku builds in a temporary workspace and removes the work after a successful
+install by default. The options below retain parts of it.
+
+Build output::
+	+PackageOutputDir+ moves makepkg's +PKGDEST+ out of the temporary
+	workspace. The default is +TmpDir+. Pakku scans the directory for reuse
+	before building. An exported +PKGDEST+ overrides the value pakku writes into
+	the build configuration.
+
+Cleanup::
+	+CleanupAfterInstall = Full+ (the default) removes the workspace and local
+	archives. +Worktree+ retains installed archives in the output directory.
+	+None+ retains the workspace as well. The last two retain only archives
+	selected for installation, and remove unselected split-package siblings.
+
+Failure::
+	+KeepBuildDirOnFailure+ and +KeepBuiltPackagesOnFailure+ retain the
+	workspace or the archives already written when a build fails.
+	+CleanupAfterInstall+ applies to successful installs only.
+
+Copy destination::
+	+PreserveBuilt+ copies the archives selected for installation to a
+	directory that outlives the run. The copy is made after the install is
+	confirmed and before pacman runs. Archives in that directory are exempt
+	from cleanup and are scanned for reuse.
+
+Environment override::
+	+PAKKU_PRESERVE_DIR+ replaces the copy destination for one invocation. The
+	path must be absolute, must exist, and must lie outside the build output.
+	When it displaces a mode other than +Disabled+, pakku reports the
+	override.
+
+Reuse::
+	Reuse requires every expected archive for the base to be present and
+	non-empty in one directory, checked in the build output first and in the
+	copy destination second. Matching is by file name. +CacheDir+ is unsuitable
+	as a build store because +pacman -Sc+ and downloads change it
+	independently.
 
 See Also
 --------

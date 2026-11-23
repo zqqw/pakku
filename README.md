@@ -114,26 +114,55 @@ Common switches:
 - `ViewNoDefault` asks before showing PKGBUILDs and other files.
 - `PreBuildCommand` runs in the package directory before the build. For example, `PreBuildCommand = customizepkg --modify` wires in customizepkg.
 
-## Built archives
+## Built archives and build policies
 
-Pakku hands builds to makepkg and installs the resulting `*.pkg.tar.*` with pacman. By default, output lives in `TmpDir` and disappears after a successful install.
+Pakku builds in `TmpDir` and deletes the workspace and the archive after a
+successful install. That is cheap for a repository package and expensive for an
+AUR one: the build takes minutes, and a reinstall, a downgrade or a build on
+another machine repeats it.
 
-| Want | Setting |
-|---|---|
-| Put makepkg output elsewhere | `PackageOutputDir = ${HOME}/.cache/pkgs` (create it first) |
-| Keep installed archives | `CleanupAfterInstall = Worktree` |
-| Keep the worktree too | `CleanupAfterInstall = None` |
-| Copy installed archives to pacman's cache | `PreserveBuilt = Internal` |
-| Copy installed archives to pakku's user cache | `PreserveBuilt = User` |
-| Copy installed archives to makepkg's `PKGDEST` | `PreserveBuilt = Pkgdest` |
-| Keep failed build output | `KeepBuildDirOnFailure`, `KeepBuiltPackagesOnFailure` |
+Pakku can keep the archives and reuse them. They can stay on this machine, or
+live in one directory that several machines can reach:
 
-Defaults are `TmpDir` output, `CleanupAfterInstall = Full` and `PreserveBuilt = Disabled`. `Worktree` and `None` still remove unselected split-package siblings.
+| Setting | Default | Why it is there |
+|---|---|---|
+| `PackageOutputDir` | `TmpDir` | Moves the archives out of the temporary workspace and becomes a reuse source. |
+| `CleanupAfterInstall` | `Full` | `Full` removes the workspace and the archives, `Worktree` keeps the installed ones, `None` also keeps the workspace. Uninstalled split-package siblings are removed in the last two. |
+| `KeepBuildDirOnFailure`, `KeepBuiltPackagesOnFailure` | off | Keep the workspace or already-written archives after a failed build, so a retry does not start from zero. |
+| `PreserveBuilt` | `Disabled` | Copies installed archives somewhere that outlives the run: pacman's cache (`Internal`), pakku's user cache (`User`), makepkg's `PKGDEST` (`Pkgdest`). |
+| `PAKKU_PRESERVE_DIR` | unset | Replaces that copy destination for one run. |
 
-Reuse looks in `PackageOutputDir` and the `PreserveBuilt` destination. Names must match exactly as `name-version-arch`, per package base. A changed PKGBUILD with the same version is reused. Delete the archive to rebuild it. Reuse is silent and all-or-nothing for the base.
+`User` is the usual local choice, because `${UserCacheDir}/packages` sits inside
+pakku's own cache where pacman's cleanup cannot reach it. `Internal` copies into
+pacman's cache, where packages are kept for later downgrades, and follows a single
+`CacheDir` entry, the last one listed. `Pkgdest` follows `makepkg.conf`, where an
+exported `PKGDEST` wins and an empty result means no copy.
 
-`Pkgdest` reads `PKGDEST` from `~/.config/pacman/makepkg.conf` before
-`/etc/makepkg.conf`. An exported `PKGDEST` wins. We do not advise using pacman's `CacheDir` as a shared build store as `pacman -Sc` and alpm downloads can prune or pollute it.
+For a directory shared between machines, mount it and name it for the run:
+
+```sh
+PAKKU_PRESERVE_DIR=/mnt/share/pakku pakku -Syu
+```
+
+The variable replaces the configured destination for that run only, and pakku
+reports when it overrides a mode other than `Disabled`. The path is checked
+before anything is built: absolute, existing, and outside the build output. Pakku
+does not mount or clean the directory, and a failed copy costs the shared copy,
+not the install.
+
+Archives are matched by file name, so share only a directory you trust and delete
+an archive to rebuild that version. Pacman's `CacheDir` is a poor choice for
+sharing, because `pacman -Sc` and its downloads change it independently.
+
+During a run:
+
+1. makepkg writes to `PackageOutputDir` or `TmpDir`. Do not export `PKGDEST`,
+   pakku writes its own value into the build configuration.
+2. Before building a base, pakku looks in the output directory and then in the
+   copy destination. Every expected archive must be present and non-empty.
+3. After you confirm, pakku copies the archives to the copy destination, runs
+   pacman, then applies `CleanupAfterInstall`. Destination archives are never
+   removed.
 
 ## Building pakku
 
