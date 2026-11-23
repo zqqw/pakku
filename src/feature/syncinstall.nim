@@ -33,6 +33,7 @@ type
     name: Option[string]
     pkgInfo: PackageInfo
     file: string
+    preserved: bool ## found in a PreserveBuilt destination; cleanup never removes it
 
   BuildResult = object
     artifacts: seq[BuildArtifact]
@@ -497,20 +498,23 @@ proc removeArchive(file: string) =
 
 proc cleanupArtifacts(config: Config; artifacts: InstallArtifacts;
     spec: CleanupSpec) =
-  ## Removes or retains built package archives according to spec.
-  ## Non-install-target files (e.g. split-package siblings) are always removed.
-  ## The retained locations are reported per artifact directory, since a reused
-  ## archive may not live in the directory the build would have written to.
+  ## Removes or retains built package archives according to spec. Archives
+  ## found in a PreserveBuilt destination are never removed: they belong to that
+  ## directory, not to this run. Other non-install-target files (e.g.
+  ## split-package siblings) are always removed. The retained locations are
+  ## reported per artifact directory, since a reused archive may not live in the
+  ## directory the build would have written to.
   var retainedDirs: seq[string]
   var seenDirs = initHashSet[string]()
   for a in artifacts.artifacts:
-    if spec.removeArchives or a.file notin artifacts.installFiles:
-      removeArchive(a.file)
-    else:
-      let dir = a.file.parentDir
-      if dir.len > 0 and dir notin seenDirs:
-        seenDirs.incl dir
-        retainedDirs.add dir
+    if not a.preserved:
+      if spec.removeArchives or a.file notin artifacts.installFiles:
+        removeArchive(a.file)
+      else:
+        let dir = a.file.parentDir
+        if dir.len > 0 and dir notin seenDirs:
+          seenDirs.incl dir
+          retainedDirs.add dir
   if not spec.removeArchives:
     for dir in retainedDirs:
       printWarning(config.color, tr"packages are saved to '$#'" % [dir])
@@ -650,23 +654,28 @@ proc findArtifactsInDir(config: Config; dir: string;
 
 proc findReusableArtifacts(config: Config; pkgInfos: seq[PackageInfo];
     outputDir, effectivePkgdest: string): seq[BuildArtifact] =
-  ## Cross-run reuse: scans outputDir then PreserveBuilt destinations.
-  ## Returns first match across all directories.
-  let replacePkgInfos = pkgInfos.mapIt(ReplacePkgInfo(name: some(it.rpc.name), pkgInfo: it))
-  var dirs = @[outputDir]
+  ## Cross-run reuse: scans outputDir then PreserveBuilt destinations. Returns
+  ## the first complete match. Archives from a PreserveBuilt destination are
+  ## marked so cleanup leaves the user's copy alone.
+  let replacePkgInfos = pkgInfos.mapIt(ReplacePkgInfo(name: some(it.rpc.name),
+    pkgInfo: it))
+  var dirs = @[(outputDir, false)]
   case config.preserveBuilt:
   of PreserveBuilt.pkgdest:
-    if effectivePkgdest.len > 0: dirs.add effectivePkgdest
+    if effectivePkgdest.len > 0: dirs.add (effectivePkgdest, true)
   of PreserveBuilt.user:
     let dir = config.userCacheInitial.cache(CacheKind.packages)
-    if dir.len > 0: dirs.add dir
+    if dir.len > 0: dirs.add (dir, true)
   of PreserveBuilt.internal:
-    if config.cache.len > 0: dirs.add config.cache
+    if config.cache.len > 0: dirs.add (config.cache, true)
   else: discard
-  for dir in dirs:
-    let found = findArtifactsInDir(config, dir, replacePkgInfos,
+  for (dir, preserved) in dirs:
+    var found = findArtifactsInDir(config, dir, replacePkgInfos,
       reportErrors = false, extGlob = PkgExtGlob)
-    if found.len > 0: return found
+    if found.len > 0:
+      if preserved:
+        for a in found.mitems: a.preserved = true
+      return found
   @[]
 
 func isValidPackagesUrl(url: string): bool =
