@@ -78,6 +78,19 @@ cd pakku-git
 makepkg -si
 ```
 
+Prebuilt x86_64 binary, no compiler needed:
+
+```shell
+git clone https://aur.archlinux.org/pakku-bin.git
+cd pakku-bin
+makepkg -si
+```
+
+The binary is linked against the `pacman` and `curl` of the release date, so
+use it on a current Arch system; `pakku` remains the package for aarch64 and
+for systems that are behind. `pakku-bin` provides and conflicts with `pakku`,
+so only one of them can be installed.
+
 Current source needs `pacman`, `libcurl.so` and `git` at runtime, plus `nim`,
 `git` and `asciidoc` to build.
 

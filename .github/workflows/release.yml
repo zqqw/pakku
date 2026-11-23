@@ -1,0 +1,102 @@
+name: Build and release binary
+
+on:
+  push:
+    tags:
+      - 'v[0-9]*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to build
+        required: true
+
+# A tag push sets github.ref_name; a manual run supplies the tag. A manual run
+# exists because the workflow only takes effect once it is on the default
+# branch, so tags pushed before that (v0.18) still need one build.
+env:
+  TAG_NAME: ${{ inputs.tag || github.ref_name }}
+
+permissions:
+  contents: write
+
+jobs:
+  # Pakku links libalpm and libcurl, so the asset is built against the current
+  # Arch libraries and is only good for the rolling release it was built on.
+  # x86_64 only; an aarch64 asset needs another runner and a matching
+  # arch=() in packaging/aur/generate.sh.
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:base-devel
+
+    steps:
+      # The image has no git, and actions/checkout needs it.
+      - name: Install git for checkout
+        run: pacman -Syu --needed --noconfirm git
+
+      - name: Trust checkout directory
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Checkout repository
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ env.TAG_NAME }}
+          fetch-depth: 0
+
+      - name: Install build dependencies
+        run: pacman -S --needed --noconfirm asciidoc curl nim
+
+      # Fails unless the tag is exactly v<Version> from config.nims and the
+      # tree is clean, so a binary can never be published under a wrong version.
+      - name: Verify tag matches config.nims
+        run: make releasecheck
+
+      - name: Build
+        run: make PREFIX=/usr
+
+      - name: Stage and archive
+        run: |
+          set -euo pipefail
+          version="${TAG_NAME#v}"
+          arch="$(uname -m)"
+          name="pakku-${version}-${arch}"
+          mkdir -p "dist/${name}"
+          make PREFIX=/usr DESTDIR="$PWD/dist/${name}" install
+          "dist/${name}/usr/bin/pakku" -V | grep -F "Pakku v${version}"
+          # Stable listing, ownership and timestamps: the same tree yields the
+          # same checksum until the linked libraries change.
+          tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner \
+            -czf "dist/${name}.tar.gz" -C dist "${name}"
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: pakku-bin
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download binaries
+        uses: actions/download-artifact@v8.0.2
+        with:
+          path: ./dist
+          merge-multiple: true
+
+      - name: List binaries
+        run: ls -lR ./dist
+
+      # Draft: publishing is the trigger for the AUR update, so the assets have
+      # to be checked first.
+      - name: Create release
+        uses: softprops/action-gh-release@v3.0.4
+        with:
+          tag_name: ${{ env.TAG_NAME }}
+          name: Release ${{ env.TAG_NAME }}
+          draft: true
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: ./dist/*
