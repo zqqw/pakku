@@ -71,6 +71,10 @@ const
   pacmanCmd* = "/usr/bin/pacman"
   makepkgCmd* = "/usr/bin/makepkg"
 
+const
+  PreserveDirEnv* = "PAKKU_PRESERVE_DIR"
+    ## Per-invocation override for the `PreserveBuilt` copy destination.
+
 template haltError*(exitCode: int): untyped =
   var e: ref HaltError
   new(e)
@@ -85,6 +89,18 @@ template commandError*(message: string, colorNeeded: Option[bool] = none(bool),
   e.color = colorNeeded
   e.error = showError
   e
+
+func sudoExecArgs*(sudoPrefix: seq[string]; preserveDir, app: string;
+    args: seq[string]): seq[string] =
+  ## Builds the argv for a `SudoExec` re-execution. The privilege helper resets
+  ## the environment, so a preserve destination chosen for this invocation is
+  ## re-added explicitly; otherwise the root run would fall back to the
+  ## configured `PreserveBuilt` mode and copy somewhere else.
+  result = sudoPrefix
+  if preserveDir.len > 0:
+    result.add ["env", PreserveDirEnv & "=" & preserveDir]
+  result.add app
+  result.add args
 
 proc helperToolCommand*(tool: string): seq[string] =
   ## Resolve a helper tool command.

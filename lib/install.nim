@@ -96,9 +96,10 @@ proc handleInstall*(params: seq[string]): int =
       return 1
 
   ## One walk over the packages: preserve each archive and sidecar, and sort the
-  ## names for the two `pacman -D` calls at the same time.
+  ## names for the two `pacman -D` calls at the same time. An empty destination
+  ## is a no-copy request, whatever the uid and gid say.
   var files, explicit, deps: seq[string]
-  let chown = command.uid >= 0 and command.gid >= 0
+  let chown = command.destination.len > 0 and command.uid >= 0 and command.gid >= 0
   for item in command.items:
     if chown:
       let name = item.file.extractFilename

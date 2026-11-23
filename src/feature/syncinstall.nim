@@ -70,6 +70,14 @@ type
     removeArchives: bool ## remove built `PkgExtGlob` files
     nukeTmpPrefix: bool ## use removeTmpDirQuiet (chases firstCreatedTmpDir) vs removeDirQuiet
 
+  PreserveTarget = object
+    ## Resolved install-time copy destination. `PAKKU_PRESERVE_DIR` supplies it
+    ## for one run, otherwise `PreserveBuilt` does. An empty `dir` means no copy:
+    ## `Disabled`, or `Pkgdest` with no effective `PKGDEST`.
+    dir: string
+    uid: int
+    gid: int
+
   Upgrade = object
     rpcInfo: RpcPackageInfo
     needed: bool
@@ -499,11 +507,11 @@ proc removeArchive(file: string) =
 proc cleanupArtifacts(config: Config; artifacts: InstallArtifacts;
     spec: CleanupSpec) =
   ## Removes or retains built package archives according to spec. Archives
-  ## found in a PreserveBuilt destination are never removed: they belong to that
-  ## directory, not to this run. Other non-install-target files (e.g.
-  ## split-package siblings) are always removed. The retained locations are
-  ## reported per artifact directory, since a reused archive may not live in the
-  ## directory the build would have written to.
+  ## found in the preserve destination are never removed: they belong to the
+  ## store, not to this run. Other non-install-target files (e.g. split-package
+  ## siblings) are always removed. The retained locations are reported per
+  ## artifact directory, since a reused archive may not live in the directory
+  ## the build would have written to.
   var retainedDirs: seq[string]
   var seenDirs = initHashSet[string]()
   for a in artifacts.artifacts:
@@ -652,23 +660,83 @@ proc findArtifactsInDir(config: Config; dir: string;
       return @[]
   artifacts
 
+func buildOutputDir(config: Config): string =
+  ## Where makepkg writes archives for this run.
+  if config.packageOutputDir.len > 0: config.packageOutputDir
+  else: config.tmpRootInitial
+
+proc canonicalDir(path: string): string =
+  ## Canonicalizes an existing directory, or the existing parent of one that
+  ## will be created later: the build output may not exist yet.
+  if dirExists(path):
+    expandFilename(path)
+  elif dirExists(path.parentDir):
+    expandFilename(path.parentDir) / path.extractFilename
+  else:
+    absolutePath(path)
+
+func pathInside(path, dir: string): bool =
+  ## True when `path` is `dir` or lies below it. Both must be canonical.
+  path == dir or path.startsWith(dir & "/")
+
+proc targetFromMode(config: Config; effectivePkgdest: string): PreserveTarget =
+  ## Destination named by `PreserveBuilt`. The user cache is created here, before
+  ## any build, so a copy never fails on a missing directory.
+  case config.preserveBuilt
+  of PreserveBuilt.internal:
+    PreserveTarget(dir: config.cache, uid: 0, gid: 0)
+  of PreserveBuilt.user:
+    for e in ensureUserCacheOrError(config, CacheKind.packages, true):
+      printError(config.color, e)
+    let user = initialUser.get(currentUser)
+    PreserveTarget(dir: config.userCacheInitial.cache(CacheKind.packages),
+      uid: user.uid, gid: user.gid)
+  of PreserveBuilt.pkgdest:
+    if effectivePkgdest.len > 0:
+      let user = initialUser.get(currentUser)
+      PreserveTarget(dir: effectivePkgdest, uid: user.uid, gid: user.gid)
+    else:
+      PreserveTarget(uid: -1, gid: -1)
+  of PreserveBuilt.disabled:
+    PreserveTarget(uid: -1, gid: -1)
+
+proc resolvePreserveTarget(config: Config; effectivePkgdest: string): PreserveTarget =
+  ## Resolves the install-time copy destination once, before any build.
+  ## `PAKKU_PRESERVE_DIR` replaces the configured mode for this invocation while
+  ## the mode stays the durable default. An unusable path fails here, not after
+  ## a build when the copy is first attempted.
+  let raw = getEnv(PreserveDirEnv)
+  if raw.len == 0:
+    return targetFromMode(config, effectivePkgdest)
+
+  if not raw.isAbsolute:
+    raise commandError(tr"$# must be an absolute path: '$#'" % [PreserveDirEnv, raw],
+      colorNeeded = some(config.color))
+  if not dirExists(raw):
+    raise commandError(tr"$# is not an existing directory: '$#'" %
+      [PreserveDirEnv, raw], colorNeeded = some(config.color))
+
+  let dir = canonicalDir(raw)
+  let output = canonicalDir(buildOutputDir(config))
+  if pathInside(dir, output):
+    raise commandError(tr"$# '$#' is inside the package output directory '$#'" %
+      [PreserveDirEnv, dir, output], colorNeeded = some(config.color))
+  if config.preserveBuilt != PreserveBuilt.disabled:
+    printWarning(config.color, tr"$# overrides PreserveBuilt = $#" %
+      [PreserveDirEnv, $config.preserveBuilt])
+
+  let user = initialUser.get(currentUser)
+  PreserveTarget(dir: dir, uid: user.uid, gid: user.gid)
+
 proc findReusableArtifacts(config: Config; pkgInfos: seq[PackageInfo];
-    outputDir, effectivePkgdest: string): seq[BuildArtifact] =
-  ## Cross-run reuse: scans outputDir then PreserveBuilt destinations. Returns
-  ## the first complete match. Archives from a PreserveBuilt destination are
-  ## marked so cleanup leaves the user's copy alone.
+    outputDir: string; target: PreserveTarget): seq[BuildArtifact] =
+  ## Cross-run reuse: scans outputDir then the preserve destination. Returns the
+  ## first complete match. Archives from the preserve destination are marked so
+  ## cleanup leaves the shared copy alone.
   let replacePkgInfos = pkgInfos.mapIt(ReplacePkgInfo(name: some(it.rpc.name),
     pkgInfo: it))
   var dirs = @[(outputDir, false)]
-  case config.preserveBuilt:
-  of PreserveBuilt.pkgdest:
-    if effectivePkgdest.len > 0: dirs.add (effectivePkgdest, true)
-  of PreserveBuilt.user:
-    let dir = config.userCacheInitial.cache(CacheKind.packages)
-    if dir.len > 0: dirs.add (dir, true)
-  of PreserveBuilt.internal:
-    if config.cache.len > 0: dirs.add (config.cache, true)
-  else: discard
+  if target.dir.len > 0: dirs.add (target.dir, true)
   for (dir, preserved) in dirs:
     var found = findArtifactsInDir(config, dir, replacePkgInfos,
       reportErrors = false, extGlob = PkgExtGlob)
@@ -1076,7 +1144,7 @@ func resolveInstallMode(pkgName: string; explicit: bool;
 
 proc buildAllBases(config: Config; commonArgs: seq[Argument];
     basePackages: seq[seq[PackageInfo]]; skipDeps, noconfirm: bool;
-    confFile, savedTo, effectivePkgdest: string): BuildBasesRes =
+    confFile, savedTo: string; target: PreserveTarget): BuildBasesRes =
   ## Build or skip each base in dependency order. On build failure, chmods the
   ## pkg directory and returns early.
   var results: seq[BuildResult]
@@ -1086,7 +1154,7 @@ proc buildAllBases(config: Config; commonArgs: seq[Argument];
     let baseName = basePackages[index][0].rpc.base
     let isTrunkPath = basePackages[index][0].rpc.gitUrl.isValidPackagesUrl()
     let reusable = findReusableArtifacts(config, basePackages[index],
-      savedTo, effectivePkgdest)
+      savedTo, target)
     if reusable.len > 0:
       results.add BuildResult(artifacts: reusable)
       continue
@@ -1163,19 +1231,18 @@ proc tagBuiltBases(config: Config; basePackages: openArray[seq[PackageInfo]];
 
 proc installGroupFromSources(config: Config; commonArgs: seq[Argument];
     basePackages: seq[seq[PackageInfo]]; explicits: HashSet[string];
-    skipDeps, noconfirm: bool; confFile, effectivePkgdest: string): InstallGroupRes =
+    skipDeps, noconfirm: bool; confFile: string; target: PreserveTarget): InstallGroupRes =
   ## Builds a dependency-ordered group of source packages, chooses which archives
   ## to install, invokes the privileged install helper, and cleans or preserves
   ## the build artifacts according to the install outcome.
   let archivesOutsideTmp = config.packageOutputDir.len > 0
-  let savedTo = if archivesOutsideTmp: config.packageOutputDir
-    else: config.tmpRootInitial
+  let savedTo = buildOutputDir(config)
 
   let successSpec = cleanupSpec(config.cleanupAfterInstall, archivesOutsideTmp)
   let failureSpec = cleanupSpecForFailure(buildFailure, config, archivesOutsideTmp)
 
   let build = buildAllBases(config, commonArgs, basePackages, skipDeps,
-    noconfirm, confFile, savedTo, effectivePkgdest)
+    noconfirm, confFile, savedTo, target)
   let artifacts = prepareArtifacts(build.results, basePackages)
   assert build.results.len + build.skipped <= basePackages.len
   assert build.code == 0 or build.results.len + build.skipped < basePackages.len,
@@ -1204,20 +1271,6 @@ proc installGroupFromSources(config: Config; commonArgs: seq[Argument];
           file: it.file,
           mode: $resolveInstallMode(it.name, it.name in explicits, local))
 
-  let (cacheDir, cacheUser, cacheGroup) =
-    if config.preserveBuilt == PreserveBuilt.internal:
-      (config.cache, 0, 0)
-    elif config.preserveBuilt == PreserveBuilt.user:
-      let error = ensureUserCacheOrError(config, CacheKind.packages, true)
-      for e in error: printError(config.color, e)
-      let user = initialUser.get(currentUser)
-      (config.userCacheInitial.cache(CacheKind.packages), user.uid, user.gid)
-    elif config.preserveBuilt == PreserveBuilt.pkgdest and effectivePkgdest.len > 0:
-      let user = initialUser.get(currentUser)
-      (effectivePkgdest, user.uid, user.gid)
-    else:
-      ("", -1, -1)
-
   let pacmanUpgradeParams = pacmanCmd & pacmanParams(config.color,
     commonArgs & ("U", none(string), ArgumentType.short))
   let pacmanDatabaseParams = pacmanCmd & pacmanParams(config.color,
@@ -1231,9 +1284,9 @@ proc installGroupFromSources(config: Config; commonArgs: seq[Argument];
     var p = config.sudoCommand
     p.add helperToolCommand("install")
     p.add encodeInstall(InstallCommand(
-      destination: cacheDir,
-      uid: cacheUser,
-      gid: cacheGroup,
+      destination: target.dir,
+      uid: target.uid,
+      gid: target.gid,
       upgrade: pacmanUpgradeParams,
       database: pacmanDatabaseParams,
       items: installWithReason))
@@ -1851,6 +1904,13 @@ proc handleInstall(args: seq[Argument]; config: Config;
     return 1
   let confFile = confFileOpt.unsafeGet.string
   let effectivePkgdest = resolveEffectivePkgdest(confFile)
+  let preserve = try:
+      resolvePreserveTarget(config, effectivePkgdest)
+    except CommandError:
+      ## The AUR clones already exist at this point, so a rejected destination
+      ## must not leave them behind.
+      clearWorktrees(config, paths, earlyFailSpec)
+      raise
 
   var canonicalRenames = initTable[string, string]()
   var code = 0
@@ -1858,7 +1918,7 @@ proc handleInstall(args: seq[Argument]; config: Config;
 
   for index in 0 ..< basePackages.len:
     let installResult = installGroupFromSources(config, commonArgs,
-      basePackages[index], explicits, skipDeps, noconfirm, confFile, effectivePkgdest)
+      basePackages[index], explicits, skipDeps, noconfirm, confFile, preserve)
     if installResult.code != 0:
       code = installResult.code
       lastIndex = index

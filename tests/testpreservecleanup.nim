@@ -49,14 +49,16 @@ suite "reuse marks the destination":
 
   test "a hit in the build output is not preserved":
     writeFile(local, "output")
-    let found = findReusableArtifacts(cfg, @[pi], outputDir, storeDir)
+    let found = findReusableArtifacts(cfg, @[pi], outputDir,
+      PreserveTarget(dir: storeDir, uid: 0, gid: 0))
     check found.len == 1
     check found[0].file == local
     check not found[0].preserved
 
   test "a hit in the destination is preserved":
     writeFile(shared, "store")
-    let found = findReusableArtifacts(cfg, @[pi], outputDir, storeDir)
+    let found = findReusableArtifacts(cfg, @[pi], outputDir,
+      PreserveTarget(dir: storeDir, uid: 0, gid: 0))
     check found.len == 1
     check found[0].file == shared
     check found[0].preserved
