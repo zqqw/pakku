@@ -1,0 +1,5 @@
+/wrapper/
+# Local AUR deploy key, never committed.
+/.aur/
+# Local copy of a release tarball.
+/dist/

@@ -1,0 +1,56 @@
+name: Publish AUR package
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published release tag
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aur-pakku-bin
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    # Holds AUR_USERNAME, AUR_EMAIL and AUR_SSH_PRIVATE_KEY. The environment is
+    # the place to require a reviewer before anything reaches the AUR.
+    environment: aur-release
+    env:
+      TAG_NAME: ${{ github.event.release.tag_name || inputs.tag }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7.0.1
+        with:
+          # The generator comes from the default branch, not from the release
+          # tag: v0.18 predates packaging/, so the tag has no script.
+          ref: ${{ github.event.repository.default_branch }}
+
+      # The release assets have to be public: a draft release is not
+      # downloadable, so this workflow starts only after publishing.
+      - name: Generate PKGBUILD
+        env:
+          AUR_MAINTAINER: ${{ secrets.AUR_MAINTAINER }}
+        run: |
+          mkdir -p aur
+          cd aur
+          bash ../packaging/aur/generate.sh "$TAG_NAME" "$GITHUB_REPOSITORY"
+
+      - name: Publish to AUR
+        uses: KSXGitHub/github-actions-deploy-aur@v4.2.0
+        with:
+          pkgname: pakku-bin
+          pkgbuild: ./aur/PKGBUILD
+          commit_username: ${{ secrets.AUR_USERNAME }}
+          commit_email: ${{ secrets.AUR_EMAIL }}
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: Update to ${{ env.TAG_NAME }}
+          test: true
+          ssh_keyscan_types: rsa,ecdsa,ed25519
