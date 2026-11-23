@@ -132,7 +132,10 @@ Common switches:
 Pakku builds in `TmpDir` and deletes the workspace and the archive after a
 successful install. That is cheap for a repository package and expensive for an
 AUR one: the build takes minutes, and a reinstall, a downgrade or a build on
-another machine repeats it.
+another machine repeats it. makepkg resolves its own configuration, so
+`/etc/makepkg.conf.d` drop-ins, the user overlay and `MAKEPKG_CONF` apply as
+they do outside pakku. pakku only sets `CARCH` and `PKGDEST` in the build
+environment.
 
 Pakku can keep the archives and reuse them. They can stay on this machine, or
 live in one directory that several machines can reach:
@@ -169,8 +172,8 @@ sharing, because `pacman -Sc` and its downloads change it independently.
 
 During a run:
 
-1. makepkg writes to `PackageOutputDir` or `TmpDir`. Do not export `PKGDEST`,
-   pakku writes its own value into the build configuration.
+1. makepkg writes to `PackageOutputDir` or `TmpDir`. pakku sets `PKGDEST` for
+   the build, so an exported value does not move the archives.
 2. Before building a base, pakku looks in the output directory and then in the
    copy destination. Every expected archive must be present and non-empty.
 3. After you confirm, pakku copies the archives to the copy destination, runs
