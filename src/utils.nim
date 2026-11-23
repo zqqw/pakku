@@ -15,7 +15,8 @@ import
     strtabs
   ],
   i18n,
-  helperproto
+  helperproto,
+  helperresolve
 export i18n, helperproto
 
 var firstCreatedTmpDir*: string
@@ -102,29 +103,76 @@ func sudoExecArgs*(sudoPrefix: seq[string]; preserveDir, app: string;
   result.add app
   result.add args
 
-proc helperToolCommand*(tool: string): seq[string] =
-  ## Resolve a helper tool command.
-  ##
-  ## Prefer the installed helper symlink in `pkgLibDir`.
-  ## When pakku runs from a development environment, falls back
-  ## to the local `lib/tools` wrapper and passes the helper name as argv[1].
-  ##
-  ## A missing helper is fatal here rather than at `exec`: running a path that
-  ## does not exist fails as a bare `perror` once the build is already done.
-  let installedTool = pkgLibDir / tool
-  if fileExists(installedTool):
-    return @[installedTool]
+func describeHelper(candidate: HelperCandidate): string =
+  ## One candidate as `path (protocol N)`, `path (absent)`, `path (no
+  ## protocol)` or `path (unverified)`, for the failure listing.
+  let detail = if candidate.protocol.len > 0:
+      "protocol " & candidate.protocol
+    elif candidate.state == HelperState.absent:
+      "absent"
+    elif candidate.state == HelperState.unverified:
+      "unverified"
+    else:
+      "no protocol"
+  candidate.location.command.join(" ") & " (" & detail & ")"
 
-  let appDir = getAppFilename().parentDir()
-  let fallbackTools = @[
-    appDir / "lib" / "tools",
-    appDir.parentDir() / "lib" / "tools"
-  ]
-  for toolsPath in fallbackTools:
-    if fileExists(toolsPath):
-      return @[toolsPath, tool]
-  raise commandError(tr("helper tool '$#' not found (expected $#); " &
-    "run 'make lib/tools' or reinstall pakku") % [tool, installedTool])
+proc helperWarning(message: string) =
+  ## Helper lookup runs before the config is read, so a warning cannot use the
+  ## configured colour and keeps the plain `warning: ` prefix.
+  stderr.writeLine(trp"warning: ", message)
+
+proc helperToolCommand*(tool: string): seq[string] =
+  ## The argv for a helper tool.
+  ##
+  ## A candidate is used only after it answers `--pakku-helper-protocol` with
+  ## the protocol this binary speaks, so a helper from another pakku version
+  ## never sees this binary's argv. A helper at a standard prefix comes from
+  ## another install and is reported when used.
+  ##
+  ## A mismatch is fatal only where pakku runs from the prefix it was built
+  ## for, because there it is a broken install. Elsewhere the candidate is
+  ## skipped, which keeps a development build working next to an older install.
+  ## The failure message lists every candidate that was tried, since a missing
+  ## helper otherwise fails as a bare `perror` after the build.
+  let resolution = resolveHelper(tool, getAppFilename().parentDir(), pkgLibDir)
+
+  if resolution.chosen.isNone:
+    for candidate in resolution.candidates:
+      if candidate.state == HelperState.incompatible and
+          candidate.fatalOnMismatch:
+        raise commandError(tr("helper tools at '$#' do not speak protocol $#; " &
+          "reinstall pakku") % [candidate.location.command[0], $helperProtocol])
+    let details = resolution.candidates.mapIt(describeHelper(it)).join(", ")
+    when devHelpers:
+      raise commandError(tr("no usable helper tool '$#': $#; run 'make lib/tools' " &
+        "or install pakku") % [tool, details])
+    else:
+      raise commandError(tr("no usable helper tool '$#': $#; install pakku") %
+        [tool, details])
+
+  assert resolution.chosen.isSome
+  let index = resolution.chosen.unsafeGet
+  for position in 0 ..< index:
+    let skipped = resolution.candidates[position]
+    if skipped.state == HelperState.incompatible:
+      let spoken = if skipped.protocol.len > 0: "protocol " & skipped.protocol
+        else: "no protocol"
+      helperWarning(tr("helper tools at '$#' answer $#, expected protocol $#; " &
+        "skipping") % [skipped.location.command[0], spoken, $helperProtocol])
+
+  let chosen = resolution.candidates[index]
+  case chosen.state
+  of HelperState.unverified:
+    helperWarning(tr"cannot verify the helper protocol at '$#'; using it anyway" %
+      [chosen.location.command[0]])
+  of HelperState.compatible:
+    if chosen.location.source == HelperSource.standardPrefix:
+      helperWarning(tr"using helper tools at '$#' (pakku was built for '$#')" %
+        [chosen.location.command[0], pkgLibDir / tool])
+  else:
+    discard
+
+  chosen.location.command
 
 iterator items*[T](self: Option[T]): T {.raises: [].} =
   if self.isSome:
