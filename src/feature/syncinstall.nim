@@ -1,6 +1,6 @@
 import
   std/[algorithm, options, os, posix, sequtils, sets, strutils, sugar, tables],
-  ".."/[args, aur, config, common, format, package, pacman, utils],
+  ".."/[args, aur, config, common, format, makepkg, package, pacman, utils],
   "../wrapper/alpm"
 when not declared(system.stdout): import std/syncio
 
@@ -557,13 +557,15 @@ proc exec(
     child: proc(): int {.closure.};
     cwd: Option[string] = none(string);
     mode: ExecMode = emNormal;
-    dropPrivs = false
+    dropPrivs = false;
+    env: seq[(string, string)] = @[]
   ): tuple[output: seq[string], code: int] =
   ## Execute child workload in isolated subprocess with optional:
   ## - privilege dropping
   ## - cwd change
   ## - output capture
   ## - stdio suppression
+  ## - environment additions
   result = (output: @[], code: -1)
 
   proc wrapped(): int =
@@ -572,6 +574,8 @@ proc exec(
       if not dropOk:
         printError(color, tr"failed to drop privileges")
         quit(1)
+    for (name, value) in env:
+      putEnv(name, value)
     if cwd.isSome and chdir(cstring(cwd.unsafeGet)) != 0:
       printError(color, tr"chdir failed: $#" % [cwd.unsafeGet])
       quit(1)
@@ -593,14 +597,16 @@ proc exec(color: bool;
     args: openArray[string];
     cwd: Option[string] = none(string);
     mode: ExecMode = emNormal;
-    dropPrivs = false
+    dropPrivs = false;
+    env: seq[(string, string)] = @[]
   ): tuple[output: seq[string], code: int] =
   ## Execute a command with optional privilege drop, output redirection,
-  ## and working directory change. Returns captured output (if redirected) and exit code.
+  ## working directory change and environment additions. Returns captured
+  ## output (if redirected) and exit code.
   let argv = @args
   exec(color, proc(): int =
     if mode == emRedirect: execRedirect(argv)
-    else: execResult(argv), cwd, mode, dropPrivs)
+    else: execResult(argv), cwd, mode, dropPrivs, env)
 
 func pkgArch(config: Config; pkgInfo: PackageInfo): string =
   ## `parseSrcInfo` omits `any` from archs, leaving an empty list for noarch
@@ -931,39 +937,6 @@ proc checkNext(config: Config; flatBasePackages: openArray[seq[PackageInfo]];
     if editRes == 's': skipEdit = true
   0
 
-proc writeMakepkgConf(config: Config; srcConf, destConf, pkgdest: string): bool =
-  ## Copies srcConf to destConf and appends pakku override stanzas.
-  ## pkgdest is the effective PKGDEST to write (caller resolves packageOutputDir).
-  ## Returns true on success.
-  try:
-    copyFile(srcConf, destConf)
-    var file: File
-    if file.open(destConf, fmAppend):
-      try:
-        file.writeLine("")
-        file.writeLine('#'.repeat(73))
-        file.writeLine("# PAKKU OVERRIDES")
-        file.writeLine('#'.repeat(73))
-        file.writeLine("CARCH=", config.common.arch.bashEscape)
-        file.writeLine("PKGDEST=", pkgdest.bashEscape)
-      finally:
-        file.close()
-    true
-  except CatchableError:
-    discard unlink(cstring(destConf))
-    false
-
-proc readConfExt(config: Config; workConfFile: string): string =
-  ## Reads PKGEXT from the environment or, failing that, sources the makepkg
-  ## conf to find the configured extension. Falls back to the glob pattern.
-  let envExt = getEnv("PKGEXT")
-  if envExt.len > 0:
-    return envExt
-  let ex = exec(config.color,
-    [bashCmd, "-c", "source \"$@\" && echo \"$PKGEXT\"", "bash", workConfFile],
-    none(string), emRedirect, true).output.optFirst.get("")
-  if ex.len > 0: ex else: PkgExtGlob
-
 proc matchArtifactsToInfos(config: Config; pkgInfos: seq[PackageInfo];
     resultPkgInfos: seq[PackageInfo]): Option[seq[ReplacePkgInfo]] =
   ## Maps each requested PackageInfo to the corresponding post-build info,
@@ -1003,7 +976,7 @@ proc matchArtifactsToInfos(config: Config; pkgInfos: seq[PackageInfo];
     some(targets)
 
 proc buildLoop(config: Config; pkgInfos: seq[PackageInfo]; skipDeps, noconfirm,
-    noextract: bool; confFile: string): (Option[BuildResult], int, bool) =
+    noextract: bool): (Option[BuildResult], int, bool) =
   ## Runs makepkg for one package base and returns discovered package artifacts
   ## paired with refreshed package metadata.
   requireNonEmpty(pkgInfos, "buildLoop")
@@ -1015,22 +988,15 @@ proc buildLoop(config: Config; pkgInfos: seq[PackageInfo]; skipDeps, noconfirm,
     buildPath = buildPath / "trunk/"
 
   let stagingDir = config.tmpRootInitial
-  let internalPkgdest = if config.packageOutputDir.len > 0:
-      config.packageOutputDir else: stagingDir
-  let workConfFile = stagingDir / "makepkg.conf"
-
-  if not writeMakepkgConf(config, confFile, workConfFile, internalPkgdest):
-    printError(config.color, tr"failed to copy config file '$#'" % [confFile])
-    return (none(BuildResult), 1, false)
-
-  let confExt = readConfExt(config, workConfFile)
+  let internalPkgdest = absolutePath(if config.packageOutputDir.len > 0:
+      config.packageOutputDir else: stagingDir)
+  let buildEnv = @[("CARCH", config.common.arch), ("PKGDEST", internalPkgdest)]
 
   let (buildCode, interrupted) = catchInterrupt():
     proc buildChild(): int =
-      discard cunsetenv("MAKEPKG_CONF")
       if not noextract:
         removeDirQuiet(buildPath / "src")
-      var cmd = @[makepkgCmd, "--config", workConfFile, "--force"]
+      var cmd = @[makepkgCmd, "--force"]
       for (arg, pred) in [
         ("--noextract", noextract),
         ("--nocolor", not config.color),
@@ -1039,9 +1005,7 @@ proc buildLoop(config: Config; pkgInfos: seq[PackageInfo]; skipDeps, noconfirm,
       ]:
         if pred: cmd.add arg
       execResult(cmd)
-    exec(config.color, buildChild, some(buildPath), emNormal, true).code
-
-  discard unlink(cstring(workConfFile))
+    exec(config.color, buildChild, some(buildPath), emNormal, true, buildEnv).code
 
   if interrupted:
     return (none(BuildResult), buildCode, true)
@@ -1054,6 +1018,9 @@ proc buildLoop(config: Config; pkgInfos: seq[PackageInfo]; skipDeps, noconfirm,
   if replacePkgInfosOpt.isNone:
     return (none(BuildResult), 1, false)
 
+  let confExt = block:
+    let configured = makepkgConfVar("PKGEXT").get("")
+    if configured.len > 0: configured else: PkgExtGlob
   let artifacts = findArtifactsInDir(config, internalPkgdest,
     replacePkgInfosOpt.unsafeGet, reportErrors = true, extGlob = confExt)
   if artifacts.len == 0:
@@ -1062,7 +1029,7 @@ proc buildLoop(config: Config; pkgInfos: seq[PackageInfo]; skipDeps, noconfirm,
   (some(BuildResult(artifacts: artifacts)), 0, false)
 
 proc tryBuild(config: Config; pkgInfos: seq[PackageInfo]; skipDeps, noconfirm,
-    trunkPath: bool; confFile, repoPath: string; gitSubdir: Option[string];
+    trunkPath: bool; repoPath: string; gitSubdir: Option[string];
     base: string; noextract, showEditLoop: bool):
     tuple[buildResult: Option[BuildResult], code: int, skipped: bool] =
   ## Build or retry one package base with interactive error handling.
@@ -1074,7 +1041,7 @@ proc tryBuild(config: Config; pkgInfos: seq[PackageInfo]; skipDeps, noconfirm,
       return (none(BuildResult), 1, false)
 
   let (buildResult, code, interrupted) = buildLoop(config, pkgInfos,
-    skipDeps, noconfirm, noextract, confFile)
+    skipDeps, noconfirm, noextract)
 
   if interrupted:
     return (buildResult, 1, false)
@@ -1089,10 +1056,10 @@ proc tryBuild(config: Config; pkgInfos: seq[PackageInfo]; skipDeps, noconfirm,
 
   case res:
   of 'e':
-    tryBuild(config, pkgInfos, skipDeps, noconfirm, trunkPath, confFile,
+    tryBuild(config, pkgInfos, skipDeps, noconfirm, trunkPath,
       repoPath, gitSubdir, base, true, true)
   of 'y':
-    tryBuild(config, pkgInfos, skipDeps, noconfirm, trunkPath, confFile,
+    tryBuild(config, pkgInfos, skipDeps, noconfirm, trunkPath,
       repoPath, gitSubdir, base, false, true)
   of 's':
     printWarning(config.color, tr"skipping package '$#'" % [base])
@@ -1101,7 +1068,7 @@ proc tryBuild(config: Config; pkgInfos: seq[PackageInfo]; skipDeps, noconfirm,
     (buildResult, code, false)
 
 proc buildFromSources(config: Config; pkgInfos: seq[PackageInfo];
-    skipDeps, noconfirm, trunkPath: bool; confFile: string):
+    skipDeps, noconfirm, trunkPath: bool):
     tuple[buildResult: Option[BuildResult], code: int, skipped: bool] =
   ## Wraps buildLoop with pre-build hooks and interactive retry/skip handling
   ## for a single package base.
@@ -1122,7 +1089,7 @@ proc buildFromSources(config: Config; pkgInfos: seq[PackageInfo];
         tr"Command failed, continue?", ['y', 'n'], 'n', 'n', noconfirm, 'n') != 'y':
       return (none(BuildResult), code, false)
 
-  tryBuild(config, pkgInfos, skipDeps, noconfirm, trunkPath, confFile,
+  tryBuild(config, pkgInfos, skipDeps, noconfirm, trunkPath,
     repoPath, gitSubdir, base, false, false)
 
 
@@ -1144,7 +1111,7 @@ func resolveInstallMode(pkgName: string; explicit: bool;
 
 proc buildAllBases(config: Config; commonArgs: seq[Argument];
     basePackages: seq[seq[PackageInfo]]; skipDeps, noconfirm: bool;
-    confFile, savedTo: string; target: PreserveTarget): BuildBasesRes =
+    savedTo: string; target: PreserveTarget): BuildBasesRes =
   ## Build or skip each base in dependency order. On build failure, chmods the
   ## pkg directory and returns early.
   var results: seq[BuildResult]
@@ -1160,7 +1127,7 @@ proc buildAllBases(config: Config; commonArgs: seq[Argument];
       continue
 
     let (buildResult, code, skipped) = buildFromSources(
-      config, basePackages[index], skipDeps, noconfirm, isTrunkPath, confFile)
+      config, basePackages[index], skipDeps, noconfirm, isTrunkPath)
     if skipped:
       inc skippedCount
       continue
@@ -1231,7 +1198,7 @@ proc tagBuiltBases(config: Config; basePackages: openArray[seq[PackageInfo]];
 
 proc installGroupFromSources(config: Config; commonArgs: seq[Argument];
     basePackages: seq[seq[PackageInfo]]; explicits: HashSet[string];
-    skipDeps, noconfirm: bool; confFile: string; target: PreserveTarget): InstallGroupRes =
+    skipDeps, noconfirm: bool; target: PreserveTarget): InstallGroupRes =
   ## Builds a dependency-ordered group of source packages, chooses which archives
   ## to install, invokes the privileged install helper, and cleans or preserves
   ## the build artifacts according to the install outcome.
@@ -1242,7 +1209,7 @@ proc installGroupFromSources(config: Config; commonArgs: seq[Argument];
   let failureSpec = cleanupSpecForFailure(buildFailure, config, archivesOutsideTmp)
 
   let build = buildAllBases(config, commonArgs, basePackages, skipDeps,
-    noconfirm, confFile, savedTo, target)
+    noconfirm, savedTo, target)
   let artifacts = prepareArtifacts(build.results, basePackages)
   assert build.results.len + build.skipped <= basePackages.len
   assert build.code == 0 or build.results.len + build.skipped < basePackages.len,
@@ -1896,14 +1863,7 @@ proc handleInstall(args: seq[Argument]; config: Config;
     printUnsatisfied(config, satisfied, unsatisfied)
     return 1
 
-  let (confFileOpt, confError) = resolveMakepkgConf()
-  if confFileOpt.isNone:
-    if confError.len > 0: printError(config.color, confError)
-    clearWorktrees(config, paths,
-      CleanupSpec(removeWorktrees: true, removeArchives: true, nukeTmpPrefix: true))
-    return 1
-  let confFile = confFileOpt.unsafeGet.string
-  let effectivePkgdest = resolveEffectivePkgdest(confFile)
+  let effectivePkgdest = resolveEffectivePkgdest()
   let preserve = try:
       resolvePreserveTarget(config, effectivePkgdest)
     except CommandError:
@@ -1918,7 +1878,7 @@ proc handleInstall(args: seq[Argument]; config: Config;
 
   for index in 0 ..< basePackages.len:
     let installResult = installGroupFromSources(config, commonArgs,
-      basePackages[index], explicits, skipDeps, noconfirm, confFile, preserve)
+      basePackages[index], explicits, skipDeps, noconfirm, preserve)
     if installResult.code != 0:
       code = installResult.code
       lastIndex = index

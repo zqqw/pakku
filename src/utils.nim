@@ -626,21 +626,3 @@ proc removeTmpDirQuiet*(s: string) =
   except CatchableError:
     discard
 
-const bashSpecialChars = {' ', '\t', '"', '\'', '`', '(', ')', '[', ']', '{', '}',
-  '#', '&', '|', ';', '!', '\\', '*', '~', '<', '>', '?', '$'}
-
-proc bashEscape*(s: string): string =
-  result = ""
-  for c in s:
-    if c in bashSpecialChars:
-      result &= "\\" & c
-    elif c == '\n':
-      result &= "$'\\n'"
-    elif c < ' ' or c >= '\x80':
-      ## Bytes outside printable ASCII go through `$'\xNN'`. `\0xNN` starts
-      ## with an octal NUL, and bash then evaluates the whole quoted segment to
-      ## an empty string, dropping the byte from the value.
-      result &= "$'\\x" & c.uint8.toHex & "'"
-    else:
-      result &= c
-
