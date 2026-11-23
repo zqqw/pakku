@@ -15,6 +15,15 @@ const helperProtocol* = 1
   ## Bumped whenever a helper argv layout changes. The helpers ship as one
   ## binary (`lib/tools` plus symlinks), so one number covers all of them.
 
+const helperProtocolArg* = "--pakku-helper-protocol"
+  ## Asks `tools` which protocol it speaks. The reply is `helperProtocol` and
+  ## exit code 0, and no helper runs.
+  ##
+  ## pakku tests a candidate with it before handing over an argv that the helper
+  ## may not understand. A helper older than this arm answers its unknown-tool
+  ## branch and exits non-zero without touching anything, so the probe is safe
+  ## with every version that has shipped. Keep the arm free of side effects.
+
 type
   InstallItem* = object
     ## One package handed to the install helper.

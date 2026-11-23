@@ -112,14 +112,25 @@ task test, "compile and run every test file in tests/":
 task testmakefile, "run Makefile smoke tests":
   let destdir = getTempDir() / "pakku-makefile-test"
   let overriddenPrefix = "/usr"
-  let pakkuBin = destdir / overriddenPrefix.strip(chars = {'/'}) / "bin" / "pakku"
+  let installedPrefix = destdir / overriddenPrefix.strip(chars = {'/'})
+  let pakkuBin = installedPrefix / "bin" / "pakku"
+  let pakkuLib = installedPrefix / "lib" / "pakku"
   if dirExists(destdir): rmDir(destdir)
   for cmd in [
     "make clean",
-    "make",
-    "make PREFIX='" & overriddenPrefix & "' src/pakku",
+    # Build for the prefix the package installs under. A later
+    # `make PREFIX=... src/pakku` sees an up-to-date binary and leaves the
+    # build-time prefix in place, which the old smoke test never noticed.
+    "make PREFIX='" & overriddenPrefix & "'",
     "make PREFIX='" & overriddenPrefix & "' DESTDIR='" & destdir & "' install",
     "'" & pakkuBin & "' -V",
+    # The staged tree carries one helper binary and two symlinks, and it answers
+    # the probe pakku will send. Resolution is not asserted here, since a
+    # release build only looks at install prefixes.
+    "test -L '" & pakkuLib & "/install' && test -x '" & pakkuLib & "/install'",
+    "test -L '" & pakkuLib & "/bisect' && test -x '" & pakkuLib & "/bisect'",
+    "'" & pakkuLib & "/tools' --pakku-helper-protocol | grep -qE '^[0-9]+$'",
+    "test -f '" & destdir & "/etc/pakku.conf'",
     "make PREFIX='" & overriddenPrefix & "' DESTDIR='" & destdir & "' uninstall",
   ]:
     exec cmd

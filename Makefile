@@ -100,7 +100,9 @@ ${MAN_PAGES}: ${MAN_PAGES:=.in}
 	-e '/^[\.'"'"']\\"/d' \
 	< "${@:=.in}" > "$@"
 
-lib/tools: lib/tools.nim $(shell find lib -name \*.nim)
+# The helper compiles in these src modules, whose edits must rebuild it too: a
+# stale helper would answer the protocol probe with an old `helperProtocol`.
+lib/tools: lib/tools.nim src/helperproto.nim src/i18n.nim $(shell find lib -name \*.nim)
 	@echo "NIM: $@"
 	@nim c ${NIM_OPTIONS} \
 	--nimcache:"${NIM_CACHE_DIR}/tools" \
