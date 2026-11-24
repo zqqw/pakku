@@ -244,9 +244,9 @@ func get[T: enum](options: PakkuOptions; key: OptionKey; default: T): T =
   enumFromString[T](options.values[key].get("")).get(default)
 
 func develDbFile*(config: Config): string =
-  ## The devel ledger: which upstream refs each development pkgbase was built
+  ## The saved devel state: which upstream refs each development pkgbase was built
   ## from. It is a memo, not a source of truth -- losing it degrades precision
-  ## (records re-form on the next build), so it lives with pakku's other
+  ## (entries re-form on the next build), so it lives with pakku's other
   ## per-user data rather than in a new state directory.
   config.userCacheInitial & "/devel.json"
 

@@ -14,7 +14,7 @@ type
     groups: seq[string]
     explicit: bool
     foreign: bool
-    base: string ## %BASE%, the pkgbase the devel ledger is keyed by
+    base: string ## %BASE%, the pkgbase the devel state is keyed by
     buildDate: int64 ## %BUILDDATE%, when makepkg produced the package
     installDate: int64 ## %INSTALLDATE%, when pacman installed it
 
@@ -52,7 +52,7 @@ type
     code: int
 
   InstallArtifacts = object
-    artifacts: seq[BuildArtifact] ## all built archives including split-package siblings
+    artifacts: seq[BuildArtifact] ## all built archives including split-package installedBaseMembers
     install: seq[InstallTarget]
     installFiles: HashSet[string] ## file paths of install targets; precomputed for O(1) cleanup lookup
     builtBases: HashSet[string]
@@ -113,35 +113,38 @@ type
     paths: seq[string]
     upToDateNeeded: seq[Installed]
     localIsNewerSeq: seq[LocalIsNewer]
-    develObserved: Table[string, seq[ObservedSource]]
+    observedGitRefs: Table[string, seq[GitRefAnswer]]
       ## Upstream refs already read for the upgrade decision, so the build
       ## records the revision the offer was made for.
+    displayTokens: Table[string, string] ## devel offer labels for final review
     errors: seq[string]
 
-  DevelProbe = object
+  DevelBuildProbe = object
     ## What the pass over the AUR clones found before `makepkg` ran.
-    observed: Table[string, seq[ObservedSource]]
+    observedGitRefs: Table[string, seq[GitRefAnswer]]
       ## pkgbase -> one entry per source of that base
-    plain: HashSet[string]
+    noPkgverBases: HashSet[string]
       ## built AUR bases whose PKGBUILD no longer looks like a development one
 
-  DevelState = object
+  DevelRunState = object
     ## Everything the devel layer knows when a build starts.
-    observed: Table[string, seq[ObservedSource]]
+    observedGitRefs: Table[string, seq[GitRefAnswer]]
       ## refs already read for the upgrade decision, so the build can record the
       ## revision the offer was made for
-    tracked: HashSet[string] ## pkgbases with a ledger record
-    siblings: Table[string, seq[string]] ## pkgbase -> installed package names
-    live: HashSet[string]
+    stateBases: HashSet[string] ## pkgbases with a devel state entry
+    installedBaseMembers: Table[string, seq[string]] ## pkgbase -> installed package names
+    aurListedBases: HashSet[string]
       ## pkgbases the AUR still lists; empty when nothing could be asked
-    checkRefs: bool ## the `--devel` flag or `CheckDevel`
+    checkGitRefs: bool ## the `--devel` flag or `CheckDevel`
+    state: ref DevelStateData ## one loaded copy, shared by decision and stamp
+    stateReadable: bool ## false when state could not be loaded; never rewrite it
 
-  DevelSettlement = object
+  DevelStateUpdate = object
     ## One base that a finished build may record, and what to record for it.
     base: string
     name: string ## the package name, for the warning
     lastModified: int64
-    sources: seq[ObservedSource]
+    sources: seq[GitRefAnswer]
 
   BuildTargetsRes = object ## Result of `resolveBuildTargets`_
     code: int
@@ -150,7 +153,9 @@ type
     pkgInfos: seq[PackageInfo]
     additionalPkgInfos: seq[PackageInfo]
     paths: seq[string]
-    devel: DevelState
+    devel: DevelRunState
+    displayTokens: Table[string, string] ## devel offer labels for final review
+
 
   PacmanBuildTargetsRes = object ## Result of `obtainPacmanBuildTargets`_
     checked: bool
@@ -206,7 +211,7 @@ template withCloneProgress(config: Config; count: int; flexible, printMode: bool
   finally:
     cloneTerminate()
 
-func isVcs(name: string): bool =
+func hasDevelSuffix(name: string): bool =
   let index = name.rfind('-')
   index >= 0 and (let suffix = name[index + 1 .. ^1];
     suffix == "bzr" or suffix == "git" or suffix == "hg" or suffix == "svn")
@@ -562,9 +567,9 @@ proc cleanupArtifacts(config: Config; artifacts: InstallArtifacts;
         removeArchive(a.file)
       else:
         let dir = a.file.parentDir
-        if dir.len > 0 and dir notin seenDirs:
-          seenDirs.incl dir
+        if dir.len > 0 and not seenDirs.containsOrIncl(dir):
           retainedDirs.add dir
+
   if not spec.removeArchives:
     for dir in retainedDirs:
       printWarning(config.color, tr"packages are saved to '$#'" % [dir])
@@ -1164,24 +1169,28 @@ func pkgbuildDir(config: Config; pkgInfo: PackageInfo): string =
   else: buildPath(root, pkgInfo.rpc.gitSubdir)
 
 proc pkgbuildIntact(config: Config; dir: string): bool =
-  ## Whether the PKGBUILD still matches the commit the AUR clone came from. The
-  ## user may edit it during the review and `.SRCINFO` is not regenerated
-  ## afterwards, so an edited base cannot be recorded: the sources on disk no
-  ## longer describe what makepkg will compile, and a record taken from them
-  ## could be newer than the archive. A worktree git cannot describe counts as
-  ## edited - the cost is one repeated offer, the alternative is a false claim.
-  exec(config.color, [gitCmd, "-C", dir, "diff", "--quiet", "--", "PKGBUILD"],
-    none(string), emSilent, true).code == 0
+  ## Whether the PKGBUILD still matches the commit the AUR clone came from.
+  ## The user may edit it during review, including staging the edit, and
+  ## `.SRCINFO` is not regenerated; recording refs from stale metadata would
+  ## claim a revision the edited PKGBUILD will not build.
+  for args in @[
+      @["-C", dir, "diff", "--quiet", "--", "PKGBUILD"],
+      @["-C", dir, "diff", "--cached", "--quiet", "--", "PKGBUILD"]]:
+    if exec(config.color, @[gitCmd] & args,
+        none(string), emSilent, true).code != 0:
+      return false
+  true
 
-proc probeDevel(config: Config; basePackages: openArray[seq[PackageInfo]];
-    devel: DevelState): DevelProbe =
+
+proc probeDevelState(config: Config; basePackages: openArray[seq[PackageInfo]];
+    devel: DevelRunState): DevelBuildProbe =
   ## Reads the refs each development base was built from, *before* makepkg runs:
   ## a pre-build tip can only be older than what gets compiled, costing at most
   ## one extra rebuild, while a post-build reading could claim a revision that
   ## was never built and suppress the update it deserves.
   ##
   ## A base is read when the check is requested or when it already has a record.
-  ## The second half is not optional: a tracked base's packaging stamp has to
+  ## The second half is not optional: a recorded base's AUR info time has to
   ## advance on every build, or an offer caused by an AUR change would repeat
   ## forever for someone who turned the flag off afterwards. A base that is
   ## neither is skipped, so an ordinary build pays nothing for a feature it does
@@ -1190,15 +1199,15 @@ proc probeDevel(config: Config; basePackages: openArray[seq[PackageInfo]];
   ## Refs already read for the upgrade decision are reused when the sources still
   ## match: the build then records the revision the offer was made for, which is
   ## what makes a completed offer go quiet, and one lookup round disappears.
-  ## Everything left goes into a single `observe` batch, so the deadline bounds
+  ## Everything left goes into a single `lookupRemoteRefs` batch, so the deadline bounds
   ## the group rather than each base.
   var batch: ObservationBatch
   for pkgInfos in basePackages:
-    requireNonEmpty(pkgInfos, "probeDevel")
+    requireNonEmpty(pkgInfos, "probeDevelState")
     if pkgInfos[0].rpc.repo != config.aurRepo:
       continue
     let base = pkgInfos[0].rpc.base
-    if not devel.checkRefs and base notin devel.tracked:
+    if not devel.checkGitRefs and base notin devel.stateBases:
       continue
     let dir = pkgbuildDir(config, pkgInfos[0])
     if not pkgbuildIntact(config, dir):
@@ -1207,41 +1216,41 @@ proc probeDevel(config: Config; basePackages: openArray[seq[PackageInfo]];
     if pkgbuild.len == 0:
       continue # an unreadable clone proves nothing either way
     if not definesPkgver(pkgbuild):
-      result.plain.incl base
+      result.noPkgverBases.incl base
       continue
-    let sources = trackableSources(readIfPresent(dir & "/.SRCINFO"),
+    let sources = gitSources(readIfPresent(dir & "/.SRCINFO"),
       config.common.arch)
-    let prior = devel.observed.opt(base)
+    let prior = devel.observedGitRefs.opt(base)
     if prior.isSome and prior.unsafeGet.describes(sources):
-      result.observed[base] = prior.unsafeGet
+      result.observedGitRefs[base] = prior.unsafeGet
     else:
       discard batch.add(base, sources)
 
-  for base, observed in batch.resolve():
-    result.observed[base] = observed
+  for base, observedGitRefs in batch.resolve():
+    result.observedGitRefs[base] = observedGitRefs
 
-func observedBases(probe: DevelProbe): HashSet[string] =
+func observedGitRefBases(probe: DevelBuildProbe): HashSet[string] =
   ## The bases this probe has refs for.
-  for base in probe.observed.keys:
+  for base in probe.observedGitRefs.keys:
     result.incl base
 
-func sourcesToRecord(probe: DevelProbe; devel: DevelState; base: string;
-    installedNames: HashSet[string]): Option[seq[ObservedSource]] =
+func gitRefsToRecord(probe: DevelBuildProbe; devel: DevelRunState; base: string;
+    installedNames: HashSet[string]): Option[seq[GitRefAnswer]] =
   ## The observations this base may be settled with, or `none` when its record
   ## must be left alone. A base is current only when everything of it that was
   ## installed is installed again: a sibling the user ignored, deselected or
   ## skipped keeps the offer alive, because the cause is still there.
-  if base in probe.plain:
-    return some(newSeq[ObservedSource]()) # no longer a development package
-  if not probe.observed.hasKey(base):
-    return none(seq[ObservedSource])
-  if not devel.siblings.getOrDefault(base).allIt(it in installedNames):
-    return none(seq[ObservedSource])
-  some(probe.observed[base])
+  if base in probe.noPkgverBases:
+    return some(newSeq[GitRefAnswer]()) # no longer a development package
+  if not probe.observedGitRefs.hasKey(base):
+    return none(seq[GitRefAnswer])
+  if not devel.installedBaseMembers.getOrDefault(base).allIt(it in installedNames):
+    return none(seq[GitRefAnswer])
+  some(probe.observedGitRefs[base])
 
-proc recordDevel(config: Config; basePackages: openArray[seq[PackageInfo]];
-    artifacts: InstallArtifacts; probe: DevelProbe; devel: DevelState) =
-  ## Records what this run built and installed; `sourcesToRecord` decides which
+proc updateDevelStateFromBuild(config: Config; basePackages: openArray[seq[PackageInfo]];
+    artifacts: InstallArtifacts; probe: DevelBuildProbe; devel: DevelRunState) =
+  ## Records what this run built and installed; `gitRefsToRecord` decides which
   ## bases that covers.
   ##
   ## A base whose PKGBUILD no longer defines `pkgver()` is settled with no
@@ -1251,48 +1260,51 @@ proc recordDevel(config: Config; basePackages: openArray[seq[PackageInfo]];
   ## cannot see `eval` or a sourced definition, so the record degrades instead of
   ## vanishing.
   let installedNames = artifacts.install.mapIt(it.name).toHashSet
-  var settlements: seq[DevelSettlement]
+  var settlements: seq[DevelStateUpdate]
   for pkgInfos in basePackages:
-    requireNonEmpty(pkgInfos, "recordDevel")
+    requireNonEmpty(pkgInfos, "updateDevelStateFromBuild")
     if not pkgInfos.allIt(it.rpc.name in installedNames):
       continue
     let base = pkgInfos[0].rpc.base
-    for sources in sourcesToRecord(probe, devel, base, installedNames):
+    for sources in gitRefsToRecord(probe, devel, base, installedNames):
       for lastModified in pkgInfos[0].rpc.lastModified:
-        settlements.add DevelSettlement(base: base, name: pkgInfos[0].rpc.name,
+        settlements.add DevelStateUpdate(base: base, name: pkgInfos[0].rpc.name,
           lastModified: lastModified, sources: sources)
 
-  if settlements.len == 0 and devel.live.len == 0:
+  if settlements.len == 0 and devel.aurListedBases.len == 0:
     return
 
-  var db = loadDevelDb(config.develDbFile)
+  assert devel.state != nil, "devel run state must carry saved state"
+  if not devel.stateReadable:
+    return
+  let db = devel.state
+
   var changed = false
-  if devel.live.len > 0:
-    let known = db.len
-    db.pruneDevelDb(devel.live)
-    changed = db.len != known
+  if devel.aurListedBases.len > 0:
+    let known = db[].len
+    db[].dropUnlistedDevelEntries(devel.aurListedBases)
+    changed = db[].len != known
   for settlement in settlements:
-    changed = db.stampDevelRecord(settlement.base, settlement.lastModified,
+    let saved = db[].opt(settlement.base)
+    changed = db[].updateDevelStateEntry(settlement.base, settlement.lastModified,
       settlement.sources) or changed
-    # A ref nobody could read is worth saying out loud, once per base: with
-    # none recorded the base is decided by packaging age, exactly like a
-    # package without git sources.
-    for record in db.opt(settlement.base):
-      if settlement.sources.len > 0 and record.sources.len == 0:
-        printWarning(config.color,
-          tr"$#: could not read any upstream ref, tracking it by packaging age only\n" %
-          [settlement.name])
+    for gitRef in settlement.sources:
+      if gitRef.commit.isNone and
+          (saved.isNone or savedCommitOf(saved, gitRef.source).isNone):
+        printWarning(config.color, tr"$#: could not read git ref at $#" %
+          [settlement.name, gitRef.source.url])
   if not changed:
     return
-  for failure in storeDevelDb(config.develDbFile, db):
-    printWarning(config.color, tr"could not record development revisions: $#" %
+  for failure in saveDevelState(config.develDbFile, db[]):
+    printWarning(config.color, tr"could not save devel state: $#" %
       [failure])
+
 
 proc buildAllBases(config: Config; commonArgs: seq[Argument];
     basePackages: seq[seq[PackageInfo]]; skipDeps, noconfirm: bool;
-    savedTo: string; target: PreserveTarget; noReuse: HashSet[string]): BuildBasesRes =
+    savedTo: string; target: PreserveTarget; rebuildDevelBases: HashSet[string]): BuildBasesRes =
   ## Build or skip each base in dependency order. On build failure, chmods the
-  ## pkg directory and returns early. `noReuse` lists development bases: their
+  ## pkg directory and returns early. `rebuildDevelBases` lists development bases: their
   ## archive name matches the static AUR version, which says nothing about the
   ## revision inside, so an old archive must not satisfy the build.
   var results: seq[BuildResult]
@@ -1301,7 +1313,7 @@ proc buildAllBases(config: Config; commonArgs: seq[Argument];
     requireNonEmpty(basePackages[index], "buildAllBases")
     let baseName = basePackages[index][0].rpc.base
     let isTrunkPath = basePackages[index][0].rpc.gitUrl.isValidPackagesUrl()
-    let reusable = if baseName in noReuse: @[]
+    let reusable = if baseName in rebuildDevelBases: @[]
       else: findReusableArtifacts(config, basePackages[index], savedTo, target)
     if reusable.len > 0:
       results.add BuildResult(artifacts: reusable)
@@ -1380,7 +1392,7 @@ proc tagBuiltBases(config: Config; basePackages: openArray[seq[PackageInfo]];
 proc installGroupFromSources(config: Config; commonArgs: seq[Argument];
     basePackages: seq[seq[PackageInfo]]; explicits: HashSet[string];
     skipDeps, noconfirm: bool; target: PreserveTarget;
-    devel: DevelState): InstallGroupRes =
+    devel: DevelRunState): InstallGroupRes =
   ## Builds a dependency-ordered group of source packages, chooses which archives
   ## to install, invokes the privileged install helper, and cleans or preserves
   ## the build artifacts according to the install outcome.
@@ -1390,13 +1402,13 @@ proc installGroupFromSources(config: Config; commonArgs: seq[Argument];
   let successSpec = cleanupSpec(config.cleanupAfterInstall, archivesOutsideTmp)
   let failureSpec = cleanupSpecForFailure(buildFailure, config, archivesOutsideTmp)
 
-  let probe = probeDevel(config, basePackages, devel)
+  let probe = probeDevelState(config, basePackages, devel)
   # A base with a record is a development package even when its PKGBUILD no
   # longer says so: the archive it would reuse may predate the refs, and a
   # reused archive is never stamped, which would leave the offer standing.
-  let noReuse = devel.tracked + probe.observedBases()
+  let rebuildDevelBases = devel.stateBases + probe.observedGitRefBases()
   let build = buildAllBases(config, commonArgs, basePackages, skipDeps,
-    noconfirm, savedTo, target, noReuse)
+    noconfirm, savedTo, target, rebuildDevelBases)
   let artifacts = prepareArtifacts(build.results, basePackages)
   assert build.results.len + build.skipped <= basePackages.len
   assert build.code == 0 or build.results.len + build.skipped < basePackages.len,
@@ -1454,7 +1466,7 @@ proc installGroupFromSources(config: Config; commonArgs: seq[Argument];
     return InstallGroupRes(code: code)
 
   tagBuiltBases(config, basePackages, artifacts.builtBases)
-  recordDevel(config, basePackages, artifacts, probe, devel)
+  updateDevelStateFromBuild(config, basePackages, artifacts, probe, devel)
   cleanupArtifacts(config, artifacts, successSpec)
 
   InstallGroupRes(canonicalRenames: artifacts.renames, code: 0)
@@ -1464,12 +1476,12 @@ proc deduplicatePkgInfos(pkgInfos: seq[PackageInfo];
   ## Deduplicate by package name, optionally warning on duplicates.
   var seen = initHashSet[string]()
   for pi in pkgInfos:
-    if pi.rpc.name in seen:
+    if seen.containsOrIncl(pi.rpc.name):
       if warnOnDup:
         printWarning(config.color, trp("skipping target: %s\n") % [pi.rpc.name])
     else:
-      seen.incl pi.rpc.name
       result.add pi
+
 
 proc resolveDependencies(config: Config; pkgInfos: seq[PackageInfo];
     additionalPkgInfos: seq[PackageInfo]; printMode: bool;
@@ -1508,7 +1520,8 @@ proc resolveDependencies(config: Config; pkgInfos: seq[PackageInfo];
     (true, satisfied, additionalPacmanTargets, orderedPkgInfos, paths)
 
 proc confirmViewAndImportKeys(config: Config; basePackages: seq[seq[seq[PackageInfo]]];
-    installed: seq[Installed]; noconfirm: bool): int =
+    installed: seq[Installed]; displayTokens: Table[string, string];
+    noconfirm: bool): int =
   if basePackages.len == 0:
     return 0
   let installedVersions = installed.mapIt((it.name, it.version)).toTable
@@ -1517,7 +1530,7 @@ proc confirmViewAndImportKeys(config: Config; basePackages: seq[seq[seq[PackageI
       for b in g:
         for i in b:
           (i.rpc.name, i.rpc.repo, installedVersions.opt(i.rpc.name),
-           i.rpc.version).PackageInstallFormat
+           displayTokens.getOrDefault(i.rpc.name, i.rpc.version)).PackageInstallFormat
     ).sorted((a, b) => cmp(a.name, b.name)))
 
   let input = printColonUserChoice(config.color,
@@ -1560,7 +1573,7 @@ proc printAllWarnings(config: Config; installed: seq[Installed];
     pkgInfos, acceptedPkgInfos: seq[PackageInfo]; upToDateNeeded: seq[Installed];
     buildUpToDateNeeded: seq[(string, string)]; localIsNewerSeq: seq[LocalIsNewer];
     targetNamesSet: HashSet[string]; upgradeCount: int; noaur: bool;
-    develDb: DevelDb) =
+    develDb: DevelStateData) =
   ## Print orphan, up-to-date, downgrade, and ignore warnings.
   ## installedTable is passed in (already computed by the caller) to avoid rebuilding.
   let acceptedSet = acceptedPkgInfos.mapIt(it.rpc.name).toHashSet
@@ -1596,7 +1609,7 @@ proc printAllWarnings(config: Config; installed: seq[Installed];
           # A development package's version says nothing about which way it
           # moved, so the downgrade wording would be a guess.
           if vercmp(cstring(newVer), cstring(instVer)) < 0 and
-              not (pkgInfo.rpc.name.isVcs or pkgInfo.rpc.base in develDb):
+              not (pkgInfo.rpc.name.hasDevelSuffix or pkgInfo.rpc.base in develDb):
             printWarning(config.color,
               tra("%s: downgrading from version %s to version %s\n") %
               [pkgInfo.rpc.name, instVer, newVer])
@@ -1669,7 +1682,7 @@ func checkNeeded(installed: Table[string, Installed];
   else:
     (true, 0)
 
-func develNeeded(lastModified: Option[int64];
+func aurInfoChanged(lastModified: Option[int64];
     buildDate, installDate: int64): bool =
   ## Whether the AUR entry changed after this package was made: the one signal
   ## that needs no state and cannot loop.
@@ -1687,18 +1700,18 @@ func develNeeded(lastModified: Option[int64];
   lastModified.isSome and reference > 0 and
     lastModified.unsafeGet > reference
 
-func develUpgrade(rpcInfo: RpcPackageInfo; installed: Installed;
-    checkRefs: bool; develDb: DevelDb;
-    observed: openArray[ObservedSource]): tuple[needed: bool, label: Option[string]] =
+func develUpgradeNeeded(rpcInfo: RpcPackageInfo; installed: Installed;
+    checkGitRefs: bool; develDb: DevelStateData;
+    observedGitRefs: openArray[GitRefAnswer]): tuple[needed: bool, label: Option[string]] =
   ## The devel upgrade decision: version strings never enter it.
   ##
-  ## Without a ledger record, packaging age is the only signal (develNeeded).
+  ## Without a devel state entry, AUR info time is the only signal (aurInfoChanged).
   ## With one, a changed AUR record means the way the package builds may have
-  ## changed; otherwise the tracked upstream refs decide, but only when the
+  ## changed; otherwise the recorded upstream refs decide, but only when the
   ## caller asked for that check.
   let record = develDb.opt(rpcInfo.base)
   if record.isNone:
-    let needed = develNeeded(rpcInfo.lastModified, installed.buildDate,
+    let needed = aurInfoChanged(rpcInfo.lastModified, installed.buildDate,
       installed.installDate)
     return (needed, (if needed: some(tr"rebuild") else: none(string)))
 
@@ -1706,7 +1719,7 @@ func develUpgrade(rpcInfo: RpcPackageInfo; installed: Installed;
   let lastModified = rpcInfo.lastModified.get(saved.lastModified)
   if lastModified != saved.lastModified:
     (true, some(tr"rebuild"))
-  elif checkRefs and saved.sources.len > 0 and refsMoved(saved, observed):
+  elif checkGitRefs and saved.sources.len > 0 and gitRefsChanged(saved, observedGitRefs):
     (true, some(tr"latest-commit"))
   else:
     (false, none(string))
@@ -1726,14 +1739,14 @@ proc inputLoop(config: Config; reqUpgrades: openArray[Upgrade];
       return filtered
     printError(config.color, tr"invalid package selection")
 
-proc observeDevel(config: Config; develDb: DevelDb;
-    candidates: openArray[RpcPackageInfo]; checkRefs: bool):
-    Table[string, seq[ObservedSource]] =
-  ## Resolves the tracked refs of the development candidates, and reports the
+proc checkDevelGitRefs(config: Config; develDb: DevelStateData;
+    candidates: openArray[RpcPackageInfo]; checkGitRefs: bool):
+    Table[string, seq[GitRefAnswer]] =
+  ## Resolves the recorded git refs of the devel candidates, and reports the
   ## two things the user can act on: a package with no record yet, and a source
   ## that could not be reached. Does nothing when the check is off, so
   ## `--print` stays offline.
-  if not checkRefs or candidates.len == 0:
+  if not checkGitRefs or candidates.len == 0:
     return
 
   var
@@ -1755,21 +1768,49 @@ proc observeDevel(config: Config; develDb: DevelDb;
   if batch.len > 0:
     printColon(config.color, tr"checking development packages...")
   result = batch.resolve()
-  for base, observed in result:
-    for entry in observed:
+  for base, observedGitRefs in result:
+    for entry in observedGitRefs:
       if entry.commit.isNone:
-        printWarning(config.color, tra("%s: could not check %s\n") %
+        printWarning(config.color, tr"$#: could not read git ref at $#" %
           [base, entry.source.url])
 
   if untracked.len > 0:
     printWarning(config.color,
-      tr"development packages not tracked yet (rebuild to track upstream): $#" %
+      tr"devel packages with no saved state (rebuild to save git refs): $#" %
       [untracked.deduplicate.join(", ")])
+
+
+func develStateTargets(rpcInfos: openArray[RpcPackageInfo];
+    develDb: DevelStateData; checkGitRefs: bool): seq[string] =
+  ## Explicit first builds are the enrolment path. They bypass upgrade
+  ## discovery, so they need a row in that phase or the user sees the
+  ## argument disappear before the build prompt. Only targets that survived
+  ## `--needed` filtering are passed in here.
+  if not checkGitRefs:
+    return
+  var seen = initHashSet[string]()
+  for info in rpcInfos:
+    if info.name.isGitName and info.base notin develDb and
+        not seen.containsOrIncl(info.name):
+      result.add info.name
+
+proc printDevelStateTargets(config: Config; names: openArray[string];
+    installed: Table[string, Installed]) =
+  ## Lists enrolment targets as unnumbered rows: they are already selected,
+  ## not skippable upgrade offers.
+  if names.len == 0:
+    return
+  printColon(config.color, tr"Devel packages whose state will be saved")
+  echo()
+  for name in names:
+    let action = if name in installed: tr"rebuild" else: tr"build"
+    echo("   ", config.aurRepo, "/", name, "  -> ", action)
+  echo()
 
 proc obtainAurPackageInfos(config: Config; rpcInfos: seq[RpcPackageInfo];
     rpcAurTargets: seq[FullPackageTarget]; installed: Table[string, Installed];
     printMode, noconfirm, needed: bool; upgradeCount: int;
-    checkRefs: bool; develDb: DevelDb): AurPackageInfosRes =
+    checkGitRefs: bool; develDb: DevelStateData): AurPackageInfosRes =
   let (upToDateNeeded, targetRpcInfos, targetRefs) = block:
     var skipped: seq[Installed]
     var infos: seq[RpcPackageInfo]
@@ -1786,14 +1827,14 @@ proc obtainAurPackageInfos(config: Config; rpcInfos: seq[RpcPackageInfo];
       refs.add target.sync.target.reference
     (skipped, infos, refs)
 
-  let develObserved = block:
+  let observedGitRefs = block:
     var candidates: seq[RpcPackageInfo]
     if upgradeCount > 0:
       for i in rpcInfos:
         if not targetRefs.anyIt(it.isProvidedBy(i.toPackageReference, true)) and
-            (i.name.isVcs or i.base in develDb):
+            (i.name.hasDevelSuffix or i.base in develDb):
           candidates.add i
-    observeDevel(config, develDb, candidates, checkRefs)
+    checkDevelGitRefs(config, develDb, candidates, checkGitRefs)
 
   let (upgradeStructs, localIsNewerSeq) = block:
     var upgrades: seq[Upgrade]
@@ -1806,10 +1847,10 @@ proc obtainAurPackageInfos(config: Config; rpcInfos: seq[RpcPackageInfo];
           continue
         let checkRes = installed.checkNeeded(i.name, i.version, upgradeCount >= 2)
         let (newNeeded, localIsNewer, label) =
-          if i.name.isVcs or i.base in develDb:
+          if i.name.hasDevelSuffix or i.base in develDb:
             # Development packages are never judged by version.
-            let (needed, develLabel) = develUpgrade(i, installed[i.name],
-              checkRefs, develDb, develObserved.getOrDefault(i.base))
+            let (needed, develLabel) = develUpgradeNeeded(i, installed[i.name],
+              checkGitRefs, develDb, observedGitRefs.getOrDefault(i.base))
             (needed, none(LocalIsNewer), develLabel)
           elif not checkRes.needed and checkRes.vercmp < 0:
             (checkRes.needed, some(LocalIsNewer(name: i.name,
@@ -1844,20 +1885,30 @@ proc obtainAurPackageInfos(config: Config; rpcInfos: seq[RpcPackageInfo];
         tra("%s: ignoring package upgrade (%s => %s)\n")
     printWarning(config.color, warnFmt % [upgrade.rpcInfo.name, instVer, newVer])
 
+  let enrolling = develStateTargets(targetRpcInfos, develDb, checkGitRefs)
   let selectedUpgradeRpcInfos =
     if printMode or noconfirm: reqUpgrades.mapIt(it.rpcInfo)
-    elif reqUpgrades.len == 0: @[]
+    elif reqUpgrades.len == 0 and enrolling.len == 0: @[]
     else:
-      printColon(config.color, tr"Available AUR upgrades")
-      echo()
-      let numberWidth = max(($reqUpgrades.len).len, 2)
-      for index, upgrade in reqUpgrades:
-        let instVer = installed[upgrade.rpcInfo.name].version
-        echo(align($(index + 1), numberWidth, ' '), ") ", config.aurRepo, "/",
-          upgrade.rpcInfo.name, " ", instVer, " -> ",
-          upgrade.label.get(upgrade.rpcInfo.version))
-      echo()
-      inputLoop(config, reqUpgrades, noconfirm)
+      printDevelStateTargets(config, enrolling, installed)
+      if reqUpgrades.len == 0:
+        @[]
+      else:
+        printColon(config.color, tr"Available AUR upgrades")
+        echo()
+        let numberWidth = max(($reqUpgrades.len).len, 2)
+        for index, upgrade in reqUpgrades:
+          let instVer = installed[upgrade.rpcInfo.name].version
+          echo(align($(index + 1), numberWidth, ' '), ") ", config.aurRepo, "/",
+            upgrade.rpcInfo.name, " ", instVer, " -> ",
+            upgrade.label.get(upgrade.rpcInfo.version))
+        echo()
+        inputLoop(config, reqUpgrades, noconfirm)
+
+  var displayTokens = initTable[string, string]()
+  for u in reqUpgrades:
+    for label in u.label:
+      displayTokens[u.rpcInfo.name] = label
 
   let fullRpcInfos = block:
     var res = targetRpcInfos
@@ -1873,7 +1924,8 @@ proc obtainAurPackageInfos(config: Config; rpcInfos: seq[RpcPackageInfo];
       paths: fetched.paths,
       upToDateNeeded: upToDateNeeded,
       localIsNewerSeq: localIsNewerSeq,
-      develObserved: develObserved,
+      observedGitRefs: observedGitRefs,
+      displayTokens: displayTokens,
       errors: fetched.errors)
 
 proc obtainPacmanBuildTargets(config: Config; pacmanTargets: seq[FullPackageTarget];
@@ -1940,25 +1992,92 @@ proc obtainInstalledWithAur(config: Config): (seq[Installed], seq[string]) =
           res.add inst.name
       res
     (installed, checkAurUpgradeNames)
+proc printDevelQueryUpgrades*(config: Config; quiet: bool): int =
+  ## Print devel offers for `-Qu` without changing state or building packages.
+  let (installed, checkNames) = obtainInstalledWithAur(config)
+  if checkNames.len == 0:
+    return 0
+  let (rpcInfos, errors) = getRpcPackageInfos(checkNames, config.aurRepo,
+    config.common.downloadTimeout, config.color)
+  for e in errors:
+    printError(config.color, e)
+  if rpcInfos.len == 0:
+    return 0
 
-func develState(installed: openArray[Installed]; develDb: DevelDb;
-    observed: Table[string, seq[ObservedSource]];
-    rpcInfos: openArray[RpcPackageInfo]; checkRefs: bool): DevelState =
-  ## Everything the devel layer needs once the AUR lookup is done: the refs
-  ## already read for the decision, the pkgbases with a record, which packages of
-  ## each base are installed, and which bases the AUR still lists.
-  var
-    siblings = initTable[string, seq[string]]()
-    live = initHashSet[string]()
-  for inst in installed:
-    siblings.mgetOrPut(inst.base, @[]).add inst.name
+  let develDb = block:
+    if not develStateWritable(config.develDbFile):
+      initOrderedTable[string, DevelStateEntry]()
+    else:
+      let loaded = loadDevelState(config.develDbFile)
+      if loaded[1].isSome:
+        printWarning(config.color, tr"$#: could not read devel state file ($#), ignoring saved state" %
+          [config.develDbFile, loaded[1].unsafeGet])
+      loaded[0]
+
+  var candidates: seq[RpcPackageInfo]
+  var checkedBases = initHashSet[string]()
   for info in rpcInfos:
-    live.incl info.base
-  var tracked = initHashSet[string]()
+    for record in develDb.opt(info.base):
+      if record.sources.len > 0 and not checkedBases.containsOrIncl(info.base):
+        candidates.add info
+  let observedGitRefs = checkDevelGitRefs(config, develDb, candidates, true)
+  let rpcTable = rpcInfos.mapIt((it.name, it)).toTable
+  var rows: seq[tuple[name, version, token: string]]
+  for inst in installed:
+    if not inst.foreign or config.ignored(inst.name, inst.groups):
+      continue
+    for info in rpcTable.opt(inst.name):
+      if not (info.name.hasDevelSuffix or info.base in develDb):
+        continue
+      let (needed, displayToken) = develUpgradeNeeded(info, inst, true,
+        develDb, observedGitRefs.getOrDefault(info.base))
+      if needed:
+        for token in displayToken:
+          rows.add (name: info.name, version: inst.version, token: token)
+
+  if rows.len > 0:
+    if not quiet:
+      printColon(config.color, tr"Available AUR devel upgrades")
+      echo()
+    for row in rows.sorted((a, b) => cmp(a.name, b.name)):
+      if quiet:
+        echo(row.name)
+      else:
+        echo("   ", config.aurRepo, "/", row.name, " ", row.version, " -> ", row.token)
+    if not quiet:
+      echo()
+  0
+
+func develLiveBases(installed: openArray[Installed];
+    rpcInfos: openArray[RpcPackageInfo]): HashSet[string] =
+  ## Installed foreign bases are conservative liveness: an ignored package can
+  ## be absent from the RPC result and still have saved devel state.
+  for inst in installed:
+    if inst.foreign:
+      result.incl inst.base
+  for info in rpcInfos:
+    result.incl info.base
+
+func buildDevelRunState(installed: openArray[Installed]; develDb: DevelStateData;
+    observedGitRefs: Table[string, seq[GitRefAnswer]];
+    liveBases: HashSet[string]; checkGitRefs, stateReadable: bool): DevelRunState =
+  ## Everything the devel layer needs once the AUR lookup is done: the refs
+  ## already read for the decision, the pkgbases with a record, which foreign
+  ## packages of each base are installed, and which bases may be pruned.
+  var installedBaseMembers = initTable[string, seq[string]]()
+  for inst in installed:
+    if not inst.foreign:
+      continue
+    installedBaseMembers.mgetOrPut(inst.base, @[]).add inst.name
+  var stateBases = initHashSet[string]()
   for base in develDb.keys:
-    tracked.incl base
-  DevelState(observed: observed, tracked: tracked, siblings: siblings,
-    live: live, checkRefs: checkRefs)
+    stateBases.incl base
+  let sharedState = new(DevelStateData)
+  sharedState[] = develDb
+  DevelRunState(observedGitRefs: observedGitRefs, stateBases: stateBases,
+    installedBaseMembers: installedBaseMembers, aurListedBases: liveBases,
+    checkGitRefs: checkGitRefs, state: sharedState,
+    stateReadable: stateReadable)
 
 proc resolveBuildTargets(config: Config; syncTargets: seq[SyncPackageTarget];
     fullTargets: seq[FullPackageTarget]; printHeader, printMode: bool;
@@ -1972,35 +2091,47 @@ proc resolveBuildTargets(config: Config; syncTargets: seq[SyncPackageTarget];
   if not printMode and (checkAur or build) and printHeader:
     printColon(config.color, tr"Resolving build targets...")
 
-  let upgradeRpcInfos =
+  let (upgradeRpcInfos, upgradeRpcErrors) = block:
+    var errors: seq[string]
     if checkAur:
       if not printMode: echo(tr"checking AUR database for upgrades...")
       let (infos, rerrors) = getRpcPackageInfos(checkAurUpgradeNames,
         config.aurRepo, config.common.downloadTimeout, config.color)
-      for e in rerrors: printError(config.color, e)
-      infos
+      for e in rerrors:
+        printError(config.color, e)
+        errors.add e
+      (infos, errors)
     else:
-      @[]
+      (@[], errors)
 
-  let develDb = block:
+  let develLive = develLiveBases(installed, upgradeRpcInfos)
+  let pruneDevel = upgradeRpcErrors.len == 0
+
+  let (develDb, develStateReadable) = block:
     # A record for a package that is gone must not decide anything. The keys are
     # the AUR pkgbases, which only the lookup knows: a split package installed by
     # an older makepkg carries no %BASE%, and its own name is no substitute for
     # the pkgbase its record is keyed by.
-    var db: DevelDb
-    if not ledgerWritable(config.develDbFile):
-      # A ledger that cannot be rewritten never advances, so it would offer the
-      # same rebuild forever. Layer 1 converges, so prefer it.
+    var db: DevelStateData
+    var readable = true
+    if not develStateWritable(config.develDbFile):
+      # A state file that cannot be rewritten never advances, so it would offer the
+      # same rebuild forever. The AUR info-time check converges, so prefer it.
       if not printMode:
-        printWarning(config.color, tr"$#: not writable, development package records are ignored" %
+        printWarning(config.color, tr"$#: not writable; saved devel state is ignored" %
           [config.develDbFile])
+      readable = false
     else:
-      db = loadDevelDb(config.develDbFile)
-      # Without an AUR lookup there is no pkgbase to judge liveness by, and an
-      # empty set would drop every record.
-      if upgradeRpcInfos.len > 0:
-        db.pruneDevelDb(upgradeRpcInfos.mapIt(it.base).toHashSet)
-    db
+      let (loaded, error) = loadDevelState(config.develDbFile)
+      if error.isSome:
+        printWarning(config.color, tr"$#: could not read devel state file ($#), ignoring saved state" %
+          [config.develDbFile, error.unsafeGet])
+        readable = false
+      db = loaded
+      # An incomplete RPC result is not evidence that a base was removed.
+      if readable and pruneDevel and develLive.len > 0:
+        db.dropUnlistedDevelEntries(develLive)
+    (db, readable)
 
   let installedTable = installed.mapIt((it.name, it)).toTable
   let (rpcAurTargets, rpcInfos) = block:
@@ -2080,9 +2211,11 @@ proc resolveBuildTargets(config: Config; syncTargets: seq[SyncPackageTarget];
     targetNamesSet: targetNamesSet,
     pkgInfos: finalPkgInfos,
     additionalPkgInfos: aur.additionalPkgInfos,
+    displayTokens: aur.displayTokens,
     paths: pacman.paths & aur.paths,
-    devel: develState(installed, develDb, aur.develObserved, upgradeRpcInfos,
-      checkDevel))
+    devel: buildDevelRunState(installed, develDb, aur.observedGitRefs,
+      (if pruneDevel: develLive else: initHashSet[string]()), checkDevel,
+      develStateReadable))
 
 func assumeInstalled(args: openArray[Argument]): seq[PackageReference] =
   for i in args:
@@ -2138,7 +2271,8 @@ proc handleInstall(args: seq[Argument]; config: Config;
     removeArchives: true,
     nukeTmpPrefix: not config.keepBuildDirOnFailure and archivesOutsideTmp)
 
-  let confirmCode = confirmViewAndImportKeys(config, basePackages, resolved.installed, noconfirm)
+  let confirmCode = confirmViewAndImportKeys(config, basePackages, resolved.installed,
+    resolved.displayTokens, noconfirm)
   if confirmCode != 0:
     clearWorktrees(config, paths, earlyFailSpec)
     return confirmCode
@@ -2363,7 +2497,9 @@ proc handleSyncInstall*(args: seq[Argument]; config: Config): int =
   let noaur = args.check(%%%"noaur")
   let build = args.check(%%%"build")
   let noconfirm = args.noconfirm
-  let checkDevel = config.checkDevel or args.check(%%%"devel")
+  let checkDevel =
+    if args.check(%%%"nodevel"): false
+    else: config.checkDevel or args.check(%%%"devel")
 
   withAur():
     let (code, syncTargets, fullTargets) = resolveAurTargets(config, targets,

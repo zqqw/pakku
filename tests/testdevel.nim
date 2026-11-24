@@ -14,8 +14,8 @@ pkgbase = rmlint-git
 """
 
   test "name:: prefix and git+ transport normalise to a git URL":
-    check trackableSources(rmlint, "x86_64") ==
-      @[TrackedSource(url: "https://github.com/sahib/rmlint.git",
+    check gitSources(rmlint, "x86_64") ==
+      @[DevelGitSource(url: "https://github.com/sahib/rmlint.git",
         branch: none(string))]
 
   test "branch fragments are kept, pinned sources dropped":
@@ -25,8 +25,8 @@ pkgbase = rmlint-git
 	source = git+https://example.org/c.git#commit=abc
 	source = git+https://example.org/d.git#unknown=1
 """
-    check trackableSources(info, "x86_64") ==
-      @[TrackedSource(url: "https://example.org/a.git", branch: some("dev"))]
+    check gitSources(info, "x86_64") ==
+      @[DevelGitSource(url: "https://example.org/a.git", branch: some("dev"))]
 
   test "non-git and unusable sources are dropped":
     let info = """
@@ -37,7 +37,7 @@ pkgbase = rmlint-git
 	source = git+file:///etc/passwd
 	source = git+https://
 """
-    check trackableSources(info, "x86_64").len == 0
+    check gitSources(info, "x86_64").len == 0
 
   test "only source and source_<arch> are read":
     let info = """
@@ -45,9 +45,9 @@ pkgbase = rmlint-git
 	source_x86_64 = git+https://example.org/x86.git
 	source_aarch64 = git+https://example.org/arm.git
 """
-    check trackableSources(info, "x86_64").mapIt(it.url) ==
+    check gitSources(info, "x86_64").mapIt(it.url) ==
       @["https://example.org/base.git", "https://example.org/x86.git"]
-    check trackableSources(info, "aarch64").mapIt(it.url) ==
+    check gitSources(info, "aarch64").mapIt(it.url) ==
       @["https://example.org/base.git", "https://example.org/arm.git"]
 
   test "duplicates collapse and queries are stripped":
@@ -57,10 +57,10 @@ pkgbase = rmlint-git
 	source = git://example.org/b.git
 	source = git+ssh://example.org/c.git
 """
-    check trackableSources(info, "x86_64") == @[
-      TrackedSource(url: "https://example.org/a.git", branch: none(string)),
-      TrackedSource(url: "git://example.org/b.git", branch: none(string)),
-      TrackedSource(url: "ssh://example.org/c.git", branch: none(string))]
+    check gitSources(info, "x86_64") == @[
+      DevelGitSource(url: "https://example.org/a.git", branch: none(string)),
+      DevelGitSource(url: "git://example.org/b.git", branch: none(string)),
+      DevelGitSource(url: "ssh://example.org/c.git", branch: none(string))]
 
 suite "pkgver detection":
   test "function definitions are recognised":
@@ -92,6 +92,11 @@ suite "remote ref parsing":
     check parseRemoteRef(output, ["refs/heads/v1", "refs/tags/v1"]) ==
       some(tag)
 
+  test "a branch beats a tag of the same name":
+    let output = tag & "\trefs/tags/dev\n" & head & "\trefs/heads/dev\n"
+    check parseRemoteRef(output, ["refs/heads/dev", "refs/tags/dev"]) ==
+      some(head)
+
   test "HEAD is only the HEAD line":
     check parseRemoteRef(head & "\tHEAD\n", ["HEAD"]) == some(head)
     check parseRemoteRef(other & "\trefs/heads/main\n", ["HEAD"]).isNone
@@ -102,8 +107,8 @@ suite "remote ref parsing":
     check parseRemoteRef("zzzzzzz\tHEAD\n", ["HEAD"]).isNone
 
   test "the names asked for follow what git clone -b resolves":
-    check TrackedSource(url: "u", branch: none(string)).refNames == @["HEAD"]
-    check TrackedSource(url: "u", branch: some("dev")).refNames ==
+    check DevelGitSource(url: "u", branch: none(string)).refNames == @["HEAD"]
+    check DevelGitSource(url: "u", branch: some("dev")).refNames ==
       @["refs/heads/dev", "refs/tags/dev"]
 
 suite "branch values":
@@ -119,37 +124,43 @@ suite "branch values":
 	source = git+https://example.org/h.git#branch=main
 	source = git+https://example.org/i.git#branch=team@host
 	source = git+https://example.org/j.git#branch=main@{1}
+	source = git+https://example.org/k.git#branch=a/.hidden
+	source = git+https://example.org/l.git#branch=a/end.
+	source = git+https://example.org/m.git#branch=a/x.lock
+	source = git+https://example.org/n.git#branch=@
+	source = git+https://example.org/o.git#branch=a//b
 """
-    check trackableSources(info, "x86_64").mapIt(it.branch) ==
+    check gitSources(info, "x86_64").mapIt(it.branch) ==
       @[some("dev/x"), some("main"), some("team@host")]
 
-suite "tracked refs":
-  let source = TrackedSource(url: "https://example.org/a.git", branch: none(string))
-  let record = DevelRecord(lastModified: 100, sources: @[
-    SourceRevision(source: source, commit: "aaaaaaaa")])
+
+suite "recorded refs":
+  let source = DevelGitSource(url: "https://example.org/a.git", branch: none(string))
+  let record = DevelStateEntry(lastModified: 100, sources: @[
+    SavedGitRef(source: source, commit: "aaaaaaaa")])
 
   test "a moved ref counts as a move":
-    check refsMoved(record, [ObservedSource(source: source,
+    check gitRefsChanged(record, [GitRefAnswer(source: source,
       commit: some("bbbbbbbb"))])
 
   test "an unchanged ref does not":
-    check not refsMoved(record, [ObservedSource(source: source,
+    check not gitRefsChanged(record, [GitRefAnswer(source: source,
       commit: some("aaaaaaaa"))])
 
   test "unverifiable refs never claim a move":
-    check not refsMoved(record, [ObservedSource(source: source,
+    check not gitRefsChanged(record, [GitRefAnswer(source: source,
       commit: none(string))])
 
   test "a source without a recorded revision cannot be called current":
-    check refsMoved(record, [ObservedSource(
-      source: TrackedSource(url: "https://example.org/new.git"),
+    check gitRefsChanged(record, [GitRefAnswer(
+      source: DevelGitSource(url: "https://example.org/new.git"),
       commit: some("cccccccc"))])
 
 suite "ledger":
   let path = getTempDir() / "pakku-devel-test.json"
   let base = "rmlint-git"
-  let source = TrackedSource(url: "https://example.org/a.git", branch: none(string))
-  let observed = @[ObservedSource(source: source, commit: some("aaaaaaaa"))]
+  let source = DevelGitSource(url: "https://example.org/a.git", branch: none(string))
+  let observedGitRefs = @[GitRefAnswer(source: source, commit: some("aaaaaaaa"))]
 
   setup:
     removeFile(path)
@@ -158,7 +169,7 @@ suite "ledger":
   test "a key is grouped once, and an empty batch resolves without a lookup":
     var batch: ObservationBatch
     check batch.resolve().len == 0
-    let other = TrackedSource(url: "https://example.org/b.git", branch: none(string))
+    let other = DevelGitSource(url: "https://example.org/b.git", branch: none(string))
     check batch.add("base-a", [source])
     check not batch.add("base-a", [other])
     check batch.add("base-b", [source, other])
@@ -175,87 +186,99 @@ suite "ledger":
     check slices["pinned"].len == 0
 
   test "stamp, store, load round-trips":
-    var db = initOrderedTable[string, DevelRecord]()
-    discard db.stampDevelRecord(base, 100, observed)
-    discard storeDevelDb(path, db)
-    let loaded = loadDevelDb(path)
+    var db = initOrderedTable[string, DevelStateEntry]()
+    discard db.updateDevelStateEntry(base, 100, observedGitRefs)
+    discard saveDevelState(path, db)
+    let loaded = loadDevelState(path)[0]
+
     check loaded == db
     check loaded[base].lastModified == 100
-    check loaded[base].sources == @[SourceRevision(source: source,
+    check loaded[base].sources == @[SavedGitRef(source: source,
       commit: "aaaaaaaa")]
 
   test "an absent or broken file is an empty ledger":
-    check loadDevelDb(path).len == 0
+    check loadDevelState(path)[0].len == 0
+    check loadDevelState(path)[1].isNone
     writeFile(path, "{not json")
-    check loadDevelDb(path).len == 0
+    let broken = loadDevelState(path)
+    check broken[0].len == 0
+    check broken[1].isSome
     writeFile(path, """{"schema": 99, "packages": {"x": {}}}""")
-    check loadDevelDb(path).len == 0
+    check loadDevelState(path)[0].len == 0
     writeFile(path, """{"schema": 1, "packages": {"x": {"lastModified": 1}}}""")
-    check loadDevelDb(path).len == 0
+    check loadDevelState(path)[0].len == 0
+
+  test "decoded refs are validated before they can reach git":
+    writeFile(path, """{"schema":1,"packages":{"x":{"lastModified":1,"sources":[{"url":"https://example.org/a.git","branch":"*","commit":"aaaaaaaa"}]}}}""")
+    check loadDevelState(path)[0]["x"].sources.len == 0
+    writeFile(path, """{"schema":1,"packages":{"x":{"lastModified":1,"sources":[{"url":"https://example.org/a.git","commit":"abc"}]}}}""")
+    check loadDevelState(path)[0]["x"].sources.len == 0
+    writeFile(path, """{"schema":1,"packages":{"x":{"lastModified":"1","sources":[]}}}""")
+    check not loadDevelState(path)[0].hasKey("x")
 
   test "an unreadable ref keeps the revision already recorded":
-    var db = initOrderedTable[string, DevelRecord]()
-    discard db.stampDevelRecord(base, 100, observed)
-    discard db.stampDevelRecord(base, 200, @[ObservedSource(source: source,
+    var db = initOrderedTable[string, DevelStateEntry]()
+    discard db.updateDevelStateEntry(base, 100, observedGitRefs)
+    discard db.updateDevelStateEntry(base, 200, @[GitRefAnswer(source: source,
       commit: none(string))])
     check db[base].lastModified == 200
     check db[base].sources[0].commit == "aaaaaaaa"
 
   test "a source that left the package drops out of the record":
-    let other = TrackedSource(url: "https://example.org/b.git", branch: none(string))
-    var db = initOrderedTable[string, DevelRecord]()
-    discard db.stampDevelRecord(base, 100, observed & @[ObservedSource(
+    let other = DevelGitSource(url: "https://example.org/b.git", branch: none(string))
+    var db = initOrderedTable[string, DevelStateEntry]()
+    discard db.updateDevelStateEntry(base, 100, observedGitRefs & @[GitRefAnswer(
       source: other, commit: some("bbbbbbbb"))])
-    discard db.stampDevelRecord(base, 200, @[ObservedSource(
+    discard db.updateDevelStateEntry(base, 200, @[GitRefAnswer(
       source: source, commit: some("cccccccc"))])
-    check db[base].sources == @[SourceRevision(source: source,
+    check db[base].sources == @[SavedGitRef(source: source,
       commit: "cccccccc")]
 
   test "a new source that cannot be read is not recorded blindly":
-    let other = TrackedSource(url: "https://example.org/b.git", branch: none(string))
-    var db = initOrderedTable[string, DevelRecord]()
-    discard db.stampDevelRecord(base, 100, observed)
-    discard db.stampDevelRecord(base, 200, @[ObservedSource(source: source,
-      commit: none(string)), ObservedSource(source: other,
+    let other = DevelGitSource(url: "https://example.org/b.git", branch: none(string))
+    var db = initOrderedTable[string, DevelStateEntry]()
+    discard db.updateDevelStateEntry(base, 100, observedGitRefs)
+    discard db.updateDevelStateEntry(base, 200, @[GitRefAnswer(source: source,
+      commit: none(string)), GitRefAnswer(source: other,
       commit: none(string))])
-    check db[base].sources == @[SourceRevision(source: source,
+    check db[base].sources == @[SavedGitRef(source: source,
       commit: "aaaaaaaa")]
 
   test "the packaging stamp advances even when nothing could be read":
     ## Holding the old stamp back would make every later run offer the same
     ## rebuild, since a record turns the comparison into an equality.
-    var db = initOrderedTable[string, DevelRecord]()
-    discard db.stampDevelRecord(base, 200, @[ObservedSource(source: source,
+    var db = initOrderedTable[string, DevelStateEntry]()
+    discard db.updateDevelStateEntry(base, 200, @[GitRefAnswer(source: source,
       commit: none(string))])
     check db[base].lastModified == 200
     check db[base].sources.len == 0
 
   test "no trackable source is a fact worth recording":
-    var db = initOrderedTable[string, DevelRecord]()
-    discard db.stampDevelRecord(base, 100, [])
+    var db = initOrderedTable[string, DevelStateEntry]()
+    discard db.updateDevelStateEntry(base, 100, [])
     check db[base].sources.len == 0
-    discard storeDevelDb(path, db)
-    check loadDevelDb(path)[base].sources.len == 0
+    discard saveDevelState(path, db)
+    check loadDevelState(path)[0][base].sources.len == 0
 
   test "prune drops uninstalled bases only":
-    var db = initOrderedTable[string, DevelRecord]()
-    discard db.stampDevelRecord(base, 100, observed)
-    discard db.stampDevelRecord("other-git", 100, observed)
-    db.pruneDevelDb(["rmlint-git"].toHashSet)
+    var db = initOrderedTable[string, DevelStateEntry]()
+    discard db.updateDevelStateEntry(base, 100, observedGitRefs)
+    discard db.updateDevelStateEntry("other-git", 100, observedGitRefs)
+    db.dropUnlistedDevelEntries(["rmlint-git"].toHashSet)
     check db.len == 1 and base in db
 
   test "store leaves no temporary file behind":
-    var db = initOrderedTable[string, DevelRecord]()
-    discard db.stampDevelRecord(base, 100, observed)
-    discard storeDevelDb(path, db)
-    discard storeDevelDb(path, db)
+    var db = initOrderedTable[string, DevelStateEntry]()
+    discard db.updateDevelStateEntry(base, 100, observedGitRefs)
+    discard saveDevelState(path, db)
+    discard saveDevelState(path, db)
     check not fileExists(path & "." & $getCurrentProcessId() & ".tmp")
 
   test "a ledger directory that does not exist yet is not a refusal":
     ## The first run has no cache directory; the clone creates it before any
     ## build can record, so warning "not writable" there would be noise.
-    check ledgerWritable(getTempDir() / "pakku-devel-absent" / "devel.json")
-    check ledgerWritable(path)
+    check develStateWritable(getTempDir() / "pakku-devel-absent" / "devel.json")
+    check develStateWritable(path)
 
   test "a directory that cannot be written is refused":
     if posix.getuid() == 0: skip()   ## root ignores directory permissions
@@ -264,7 +287,7 @@ suite "ledger":
     createDir(parent)
     setFilePermissions(parent, {fpUserRead, fpUserExec})
     try:
-      check not ledgerWritable(parent / "devel.json")
+      check not develStateWritable(parent / "devel.json")
     finally:
       setFilePermissions(parent, {fpUserRead, fpUserWrite, fpUserExec})
       removeDir(parent)
@@ -275,7 +298,7 @@ suite "observing a remote":
   ## allowlist blocks on purpose, so `git daemon` provides the `git://` one.
   let
     gitExe = findExe("git")
-    root = getTempDir() / "pakku-devel-observe-test"
+    root = getTempDir() / "pakku-devel-lookupRemoteRefs-test"
     src = root / "src"
     remote = root / "remote.git"
     port = 18000 + getCurrentProcessId() mod 40000
@@ -309,7 +332,7 @@ suite "observing a remote":
       discard git("-C", src, "commit", "-qm", "one")
       discard git("-C", src, "tag", "v1")
       discard git("-C", src, "branch", "dev")
-      ## A nested ref with the last component of the tracked one: asking git
+      ## A nested ref with the last component of the recorded one: asking git
       ## for a bare `dev` would report this first and sort before `dev`.
       discard git("-C", src, "branch", "a/dev")
       discard git("-C", src, "checkout", "-q", "dev")
@@ -337,36 +360,52 @@ suite "observing a remote":
     let tag = git("-C", remote, "rev-parse", "v1")
     let head = git("-C", remote, "rev-parse", "HEAD")
     check dev != nested
-    let observed = observe([
-      TrackedSource(url: url, branch: some("dev")),
-      TrackedSource(url: url, branch: some("a/dev")),
-      TrackedSource(url: url, branch: some("v1")),
-      TrackedSource(url: url, branch: none(string))])
-    check observed.mapIt(it.commit) ==
+    let observedGitRefs = lookupRemoteRefs([
+      DevelGitSource(url: url, branch: some("dev")),
+      DevelGitSource(url: url, branch: some("a/dev")),
+      DevelGitSource(url: url, branch: some("v1")),
+      DevelGitSource(url: url, branch: none(string))])
+    check observedGitRefs.mapIt(it.commit) ==
       @[some(dev), some(nested), some(tag), some(head)]
 
   test "one lookup hands each key its own slice, in order":
     if gitExe.len == 0: skip()
-    let dev = TrackedSource(url: url, branch: some("dev"))
-    let tag = TrackedSource(url: url, branch: some("v1"))
-    let head = TrackedSource(url: url, branch: none(string))
+    let dev = DevelGitSource(url: url, branch: some("dev"))
+    let tag = DevelGitSource(url: url, branch: some("v1"))
+    let head = DevelGitSource(url: url, branch: none(string))
     var batch: ObservationBatch
     check batch.add("branch-and-tag", [dev, tag])
     check batch.add("head", [head])
     ## A base seen twice in the candidate list is looked up once.
     check not batch.add("branch-and-tag", [head])
     let slices = batch.resolve()
-    check slices["branch-and-tag"] == observe([dev, tag])
-    check slices["head"] == observe([head])
+    check slices["branch-and-tag"] == lookupRemoteRefs([dev, tag])
+    check slices["head"] == lookupRemoteRefs([head])
 
   test "a ref that does not exist is unverifiable, not a move":
     if gitExe.len == 0: skip()
-    check observe([TrackedSource(url: url, branch: some("nosuch"))])[0]
+    check lookupRemoteRefs([DevelGitSource(url: url, branch: some("nosuch"))])[0]
       .commit.isNone
 
   test "a URL that looks like an option stays a URL":
     if gitExe.len == 0: skip()
     let marker = root / "should-not-exist"
-    check observe([TrackedSource(
+    check lookupRemoteRefs([DevelGitSource(
       url: "--upload-pack=touch " & marker)])[0].commit.isNone
     check not fileExists(marker)
+
+  test "a ref check survives a deleted working directory":
+    ## git aborts before contacting a remote when getcwd() fails, so its
+    ## children must not inherit a vanished caller cwd.
+    if gitExe.len == 0: skip()
+    let expected = git("-C", remote, "rev-parse", "HEAD")
+    let old = getCurrentDir()
+    let gone = root / "gone"
+    createDir(gone)
+    try:
+      setCurrentDir(gone)
+      removeDir(gone)
+      let observedGitRefs = lookupRemoteRefs([DevelGitSource(url: url, branch: none(string))])
+      check observedGitRefs[0].commit == some(expected)
+    finally:
+      setCurrentDir(old)

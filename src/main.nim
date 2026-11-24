@@ -72,8 +72,24 @@ proc handleQuery(args: seq[Argument], config: Config): int =
     queryArgs.count(%%%"unrequired") >= 3:
     handleQueryOrphans(args, config)
   else:
-    passValidation(args, config, [], [],
+    let showDevel =
+      if args.check(%%%"nodevel"): false
+      else: config.checkDevel or args.check(%%%"devel")
+    let isUpgradeQuery = queryArgs.check(%%%"upgrades")
+    let pacmanArgs =
+      if isUpgradeQuery:
+        args.filterIt(not it.matchOption(%%%"devel") and
+          not it.matchOption(%%%"nodevel"))
+      else:
+        args
+    let code = passValidation(pacmanArgs, config, [], [],
       commonOptions, queryOptions)
+    if code != 0:
+      code
+    elif showDevel and isUpgradeQuery and queryArgs.anyIt(it.isTarget) == false:
+      printDevelQueryUpgrades(config, queryArgs.check(%%%"quiet"))
+    else:
+      code
 
 proc handleRemove(args: seq[Argument], config: Config): int =
   let nonRootArgs = [
@@ -199,6 +215,8 @@ proc handleHelp(operation: OperationType) =
         printHelp(%%%"noaur", none(string), tr"disable all AUR operations")
         printHelp(%%%"devel", none(string),
           tr"check development packages for upstream changes")
+        printHelp(%%%"nodevel", none(string),
+          tr"disable development package checks for this run")
         printHelp(%%%"source", none(string), tr"retrieve PKGBUILD source")
       else:
         discard

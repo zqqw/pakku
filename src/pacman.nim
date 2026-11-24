@@ -152,6 +152,7 @@ const
     $(^o("keyserver")) + g(syncInstall),
     $o("noaur") + g(syncInstall),
     $o("devel") + g(syncInstall),
+    $o("nodevel") + g(syncInstall),
     $o("z", "source") + g()
   ]
 

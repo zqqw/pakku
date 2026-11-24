@@ -19,26 +19,26 @@ import
 ## still point where they did, and rebuild when they do not.
 
 type
-  TrackedSource* = object
+  DevelGitSource* = object
     ## One `source` entry from `.SRCINFO`, reduced to what `git ls-remote` needs.
     url*: string
     branch*: Option[string] ## none = remote HEAD, else the `#branch=` fragment
 
-  SourceRevision* = object
+  SavedGitRef* = object
     ## The ref a build used, and the commit it pointed at when the build started.
-    source*: TrackedSource
+    source*: DevelGitSource
     commit*: string
 
-  DevelRecord* = object
+  DevelStateEntry* = object
     ## What one pkgbase was built from, and which AUR entry that build saw.
     lastModified*: int64 ## AUR pkgbase metadata stamp at record time
-    sources*: seq[SourceRevision]
+    sources*: seq[SavedGitRef]
 
-  DevelDb* = OrderedTable[string, DevelRecord] ## pkgbase -> record
+  DevelStateData* = OrderedTable[string, DevelStateEntry] ## pkgbase -> record
 
-  ObservedSource* = object
+  GitRefAnswer* = object
     ## What a lookup answered for one source now.
-    source*: TrackedSource
+    source*: DevelGitSource
     commit*: Option[string] ## none = the ref could not be verified
 
 const
@@ -49,67 +49,75 @@ const
   hexDigits = {'0'..'9', 'a'..'f', 'A'..'F'}
   refForbidden = {'\x00'..'\x20', '\x7f', '~', '^', ':', '?', '*', '[', '\\'}
 
+func isRefComponent(part: string): bool =
+  part.len > 0 and part[0] != '.' and part[^1] != '.' and
+    not part.endsWith(".lock")
+
 func isRefName(name: string): bool =
-  ## `#branch=` is handed to `git ls-remote` as a ref name, so it has to be one
-  ## `git clone -b` would also accept. The glob characters are the ones that
-  ## matter: `git ls-remote` matches patterns against ref tails, so a `*` asks
-  ## for every ref in the repository - gigabytes of output, a killed child and a
-  ## source that can never be verified. The rest are `git check-ref-format`
-  ## rules that would make the lookup or the build fail anyway.
-  if name.len == 0 or name[0] == '.' or name[0] == '/' or name[^1] == '/' or
-      name[^1] == '.' or name.endsWith(".lock"):
+  ## `#branch=` is handed to `git ls-remote` as a ref name, so every component
+  ## has to satisfy git's rules. A bare `*` is the dangerous case: git matches
+  ## patterns against ref tails and would list every ref in the repository.
+  if name.len == 0 or name == "@" or not isRefComponent(name):
     return false
-  if name.contains("..") or name.contains("@{") or name.contains("//"):
+  if name.contains("..") or name.contains("@{"):
     return false
-  for character in name:
+  var componentStart = 0
+  for index, character in name:
     if character in refForbidden:
       return false
-  true
+    if character == '/':
+      if not isRefComponent(name[componentStart ..< index]):
+        return false
+      componentStart = index + 1
+  isRefComponent(name[componentStart .. ^1])
 
-func parseSourceEntry(value: string): Option[TrackedSource] =
+func parseSourceEntry(value: string): Option[DevelGitSource] =
   ## `<name>::<scheme>+<transport>://<path>[?query][#branch=<ref>]`, with the
   ## parts `git ls-remote` actually accepts. Everything else is dropped: a
   ## source that cannot be verified must not become an upgrade signal.
   let schemeAt = value.find("://")
   if schemeAt < 0:
-    return none(TrackedSource)
+    return none(DevelGitSource)
   let prefixAt = value.find("::")
   let body = if prefixAt >= 0 and prefixAt < schemeAt: value[prefixAt + 2 .. ^1]
     else: value
   let bodySchemeAt = body.find("://")
   if bodySchemeAt < 0:
-    return none(TrackedSource)
+    return none(DevelGitSource)
 
-  let tokens = body[0 ..< bodySchemeAt].split('+')
-  if "git" notin tokens:
-    return none(TrackedSource)
-  let protocol = tokens[^1]
-  if protocol notin gitProtocols:
-    return none(TrackedSource)
+  var hasGit = false
+  var protocol = ""
+  for token in split(body[0 ..< bodySchemeAt], '+'):
+    if token == "git":
+      hasGit = true
+    protocol = token
+  if not hasGit or protocol notin gitProtocols:
+    return none(DevelGitSource)
 
   let rest = body[bodySchemeAt + 3 .. ^1]
   let fragmentAt = rest.find('#')
   let pathAndQuery = if fragmentAt >= 0: rest[0 ..< fragmentAt] else: rest
-  let path = pathAndQuery.split('?')[0]
-  if path.len == 0:
-    return none(TrackedSource)
+  let queryAt = pathAndQuery.find('?')
+  let path = if queryAt >= 0: pathAndQuery[0 ..< queryAt] else: pathAndQuery
+  if path.len == 0 or path[0] == '-':
+    return none(DevelGitSource)
   let url = protocol & "://" & path
-  if url.startsWith('-'):
-    return none(TrackedSource)
 
   var branch = none(string)
   if fragmentAt >= 0:
-    let fragment = rest[fragmentAt + 1 .. ^1].split('?')[0]
-    if not fragment.startsWith("branch="):
-      return none(TrackedSource) # `#tag=`, `#commit=`, or unknown: pinned
-    let name = fragment["branch=".len .. ^1]
+    let fragment = rest[fragmentAt + 1 .. ^1]
+    let nameEnd = fragment.find('?')
+    let fragmentName = if nameEnd >= 0: fragment[0 ..< nameEnd] else: fragment
+    if not fragmentName.startsWith("branch="):
+      return none(DevelGitSource) # pinned source, not a moving ref
+    let name = fragmentName["branch=".len .. ^1]
     if name.startsWith('-') or not isRefName(name):
-      return none(TrackedSource)
+      return none(DevelGitSource)
     branch = some(name)
 
-  some(TrackedSource(url: url, branch: branch))
+  some(DevelGitSource(url: url, branch: branch))
 
-func trackableSources*(srcInfo: string; arch: string): seq[TrackedSource] =
+func gitSources*(srcInfo: string; arch: string): seq[DevelGitSource] =
   ## Git sources of the current architecture, deduplicated.
   let archKey = "source_" & arch
   for line in srcInfo.splitLines:
@@ -161,7 +169,7 @@ func definesPkgver*(pkgbuild: string): bool =
       return true
   false
 
-func refNames*(source: TrackedSource): seq[string] =
+func refNames*(source: DevelGitSource): seq[string] =
   ## The exact ref names to ask for: a branch, then a tag of the same name,
   ## because `git clone -b` accepts either; `HEAD` alone when no branch was
   ## named. Fully qualified, because `git ls-remote` matches a pattern against
@@ -178,17 +186,23 @@ func parseRemoteRef*(output: string; names: openArray[string]): Option[string] =
   ## another ref that happened to match a pattern can never be mistaken for the
   ## one that was asked about.
   for name in names:
-    for line in output.splitLines:
-      let fields = line.splitWhitespace
-      if fields.len < 2 or fields[1] != name:
+    for line in splitLines(output):
+      var fields: array[2, string]
+      var count = 0
+      for field in line.splitWhitespace:
+        if count == fields.len: break
+        fields[count] = field
+        inc count
+      if count < 2 or fields[1] != name:
         continue
       let hash = fields[0]
       if hash.len >= 7 and hash.len <= 64 and hash.allIt(it in hexDigits):
         return some(hash)
   none(string)
 
-func refsMoved*(record: DevelRecord;
-    observed: openArray[ObservedSource]): bool =
+
+func gitRefsChanged*(record: DevelStateEntry;
+    observed: openArray[GitRefAnswer]): bool =
   ## Whether any observable ref is unknown to the record or points elsewhere.
   ## A ref that could not be looked up says nothing and never counts as a move.
   for o in observed:
@@ -197,8 +211,8 @@ func refsMoved*(record: DevelRecord;
       return true
   false
 
-func describes*(observed: openArray[ObservedSource];
-    sources: openArray[TrackedSource]): bool =
+func describes*(observed: openArray[GitRefAnswer];
+    sources: openArray[DevelGitSource]): bool =
   ## Whether the observations cover exactly these sources. Used to reuse a ref
   ## list already read for an upgrade decision: a source list that changed since
   ## then describes a different package and must be read again.
@@ -226,8 +240,10 @@ type
     ## A child that was started and still has to be waited for.
     index: int ## where this process's answer belongs in the result
     process: Process
+    names: seq[string] ## ref names actually sent to git
 
-proc observe*(sources: openArray[TrackedSource]): seq[ObservedSource] =
+
+proc lookupRemoteRefs*(sources: openArray[DevelGitSource]): seq[GitRefAnswer] =
   ## Asks each remote where its tracked ref points. Returns one entry per
   ## source, in order; an entry whose `commit` is `none` could not be verified.
   ##
@@ -235,30 +251,54 @@ proc observe*(sources: openArray[TrackedSource]): seq[ObservedSource] =
   ## a per-process timeout would serialise a dead network into minutes. `--`
   ## terminates options, so an AUR-supplied URL or ref can never become a git
   ## flag, and `GIT_ALLOW_PROTOCOL` keeps `ext::` transports out of reach.
-  result = newSeq[ObservedSource](sources.len)
+  result = newSeq[GitRefAnswer](sources.len)
   for index, source in sources:
-    result[index] = ObservedSource(source: source, commit: none(string))
+    result[index] = GitRefAnswer(source: source, commit: none(string))
   if sources.len == 0:
     return
 
   let started = getMonoTime()
   let environment = gitEnvironment()
+  let observeDir = block:
+    let home =
+      if environment.hasKey("HOME"): environment["HOME"]
+      else: ""
+    if home.len == 0: "/"
+    else:
+      try: home.absolutePath
+      except CatchableError: "/"
+  environment["HOME"] = observeDir
+
+  let previousDir =
+    try: some(getCurrentDir())
+    except CatchableError: none(string)
+
   var running: seq[RunningObservation]
-  for index, source in sources:
-    # Fully qualified names, never a bare branch: `git ls-remote` matches a
-    # pattern on ref tails, so `dev` would also return `refs/heads/a/dev` and
-    # the answer could describe a ref the build never uses. Both namespaces are
-    # asked because `git clone -b` accepts a tag as well, and `--no-tags` does
-    # not hide an explicitly requested one. `--` already ended option parsing,
-    # so neither a URL nor a ref can become a flag.
+  try:
     try:
-      let command = @["ls-remote", "--no-tags", "--", source.url] &
-        refNames(source)
-      running.add RunningObservation(index: index, process: startProcess(gitCmd,
-        args = command, env = environment,
-        options = {poStdErrToStdOut, poUsePath}))
+      setCurrentDir(observeDir)
     except CatchableError:
-      discard # stays unverifiable
+      discard # children below simply stay unverifiable
+    for index, source in sources:
+      # Fully qualified names, never a bare branch: `git ls-remote` matches a
+      # pattern on ref tails, so `dev` would also return `refs/heads/a/dev` and
+      # the answer could describe a ref the build never uses. Both namespaces are
+      # asked because `git clone -b` accepts a tag as well, and `--no-tags` does
+      # not hide an explicitly requested one. `--` already ended option parsing,
+      # so neither a URL nor a ref can become a flag.
+      try:
+        let names = refNames(source)
+        let command = @["ls-remote", "--no-tags", "--", source.url] & names
+        running.add RunningObservation(index: index, names: names,
+          process: startProcess(gitCmd, args = command, env = environment,
+            workingDir = observeDir, options = {poStdErrToStdOut, poUsePath}))
+
+      except CatchableError:
+        discard # stays unverifiable
+  finally:
+    for path in previousDir:
+      try: setCurrentDir(path)
+      except CatchableError: discard
 
   for entry in running:
     try:
@@ -266,7 +306,7 @@ proc observe*(sources: openArray[TrackedSource]): seq[ObservedSource] =
         (getMonoTime() - started).inMilliseconds.int
       if waitForExit(entry.process, max(remaining, 1)) == 0:
         result[entry.index].commit = parseRemoteRef(
-          entry.process.outputStream.readAll(), refNames(sources[entry.index]))
+          entry.process.outputStream.readAll(), entry.names)
     except CatchableError:
       discard
     finally:
@@ -274,22 +314,21 @@ proc observe*(sources: openArray[TrackedSource]): seq[ObservedSource] =
 
 type
   ObservationBatch* = object
-    ## Sources grouped by key and resolved by one `observe` call, so a pass over
+    ## Sources grouped by key and resolved by one `lookupRemoteRefs` call, so a pass over
     ## many packages pays one deadline instead of one per package. The grouping
     ## is kept, so each key gets its own slice back and callers never rebuild
     ## the offset arithmetic themselves.
     seen: HashSet[string]
     keys: seq[string]
     counts: seq[int]
-    sources: seq[TrackedSource]
+    sources: seq[DevelGitSource]
 
 func add*(batch: var ObservationBatch; key: string;
-    sources: openArray[TrackedSource]): bool =
+    sources: openArray[DevelGitSource]): bool =
   ## Adds one key's sources, once per key. Returns false when the key was already
   ## there, which is what a split base needs: several packages, one lookup.
-  if key in batch.seen:
+  if batch.seen.containsOrIncl(key):
     return false
-  batch.seen.incl key
   batch.keys.add key
   batch.counts.add sources.len
   batch.sources.add sources
@@ -299,22 +338,22 @@ func len*(batch: ObservationBatch): int =
   ## Number of keys grouped, not number of sources.
   batch.keys.len
 
-proc resolve*(batch: ObservationBatch): Table[string, seq[ObservedSource]] =
+proc resolve*(batch: ObservationBatch): Table[string, seq[GitRefAnswer]] =
   ## One lookup for everything in the batch, then a slice per key. Nothing is
   ## started for a key that brought no sources, and an empty batch costs nothing.
   if batch.keys.len == 0:
     return
-  let answers = observe(batch.sources)
+  let answers = lookupRemoteRefs(batch.sources)
   var offset = 0
   for index, key in batch.keys:
     let count = batch.counts[index]
     result[key] = answers[offset ..< offset + count]
     offset += count
 
-func toJson(db: DevelDb): JsonNode =
+func toJson(db: DevelStateData): JsonNode =
   ## The file this version writes. `schema` is 1 because `fromJson` refuses
   ## anything else: a future layout bumps it, and an older pakku then sees an
-  ## empty ledger instead of misreading fields it never wrote.
+  ## empty devel state instead of misreading fields it never wrote.
   result = %*{"schema": 1, "packages": newJObject()}
   for base, record in db:
     var sources = newJArray()
@@ -326,8 +365,21 @@ func toJson(db: DevelDb): JsonNode =
     result["packages"][base] = %*{
       "lastModified": record.lastModified, "sources": sources}
 
-func fromJson(node: JsonNode): DevelDb =
-  ## Whatever is not a ledger this version wrote is ignored: a hand-edited or
+func isRecordedCommit(commit: string): bool =
+  commit.len in 7 .. 64 and commit.allIt(it in hexDigits)
+
+func isRecordedSource(source: DevelGitSource): bool =
+  let schemeAt = source.url.find("://")
+  if schemeAt < 1 or source.url.len <= schemeAt + 3 or
+      source.url[0 ..< schemeAt] notin gitProtocols:
+    return false
+  for branch in source.branch:
+    if not isRefName(branch):
+      return false
+  true
+
+func fromJson(node: JsonNode): DevelStateData =
+  ## Whatever is not devel state this version wrote is ignored: a hand-edited or
   ## half-written file degrades to "no records", never to a crash.
   if node == nil or node.kind != JObject or node{"schema"}.getInt(0) != 1:
     return
@@ -338,10 +390,13 @@ func fromJson(node: JsonNode): DevelDb =
   for base, record in packages.pairs:
     if record == nil or record.kind != JObject:
       continue
+    let stampNode = record{"lastModified"}
+    if stampNode == nil or stampNode.kind != JInt:
+      continue
     let sourcesNode = record{"sources"}
     if sourcesNode == nil or sourcesNode.kind != JArray:
       continue
-    var parsed = DevelRecord(lastModified: record{"lastModified"}.getBiggestInt(0))
+    var parsed = DevelStateEntry(lastModified: stampNode.getInt)
     for entry in sourcesNode.items:
       if entry == nil or entry.kind != JObject:
         continue
@@ -350,25 +405,32 @@ func fromJson(node: JsonNode): DevelDb =
       if url.len == 0 or commit.len == 0:
         continue
       let branch = entry{"branch"}.getStr
-      parsed.sources.add SourceRevision(
-        source: TrackedSource(url: url,
-          branch: (if branch.len > 0: some(branch) else: none(string))),
-        commit: commit)
+      let source = DevelGitSource(url: url,
+        branch: (if branch.len > 0: some(branch) else: none(string)))
+      if not isRecordedSource(source) or not isRecordedCommit(commit):
+        continue
+      parsed.sources.add SavedGitRef(source: source, commit: commit)
     result[base] = parsed
 
-proc loadDevelDb*(path: string): DevelDb =
-  ## An absent, unreadable or malformed file is an empty ledger: every
-  ## development package then falls back to the packaging-age rule.
+proc loadDevelState*(path: string): (DevelStateData, Option[string]) =
+  ## An absent file is normal empty devel state. An existing file that cannot be
+  ## read or decoded is also empty, but carries the reason so callers can warn:
+  ## silently dropping entries hides a broken state file.
+  var db: DevelStateData
+  if not fileExists(path):
+    return (db, none(string))
   try:
-    result = fromJson(parseFile(path))
+    db = fromJson(parseFile(path))
   except CatchableError:
-    discard # absent or malformed: callers see no records
+    return (db, some(getCurrentExceptionMsg()))
+  (db, none(string))
 
-proc pruneDevelDb*(db: var DevelDb; live: HashSet[string]) =
+proc dropUnlistedDevelEntries*(db: var DevelStateData; live: HashSet[string]) =
   ## Drops records for pkgbases the AUR no longer lists. The key has to come
   ## from the AUR: `%BASE%` is absent on packages built by older makepkg, so the
   ## local database cannot name a split package's pkgbase.
-  var stale: seq[string]
+  var stale = newSeqOfCap[string](db.len)
+
   for base in db.keys:
     if base notin live:
       stale.add base
@@ -376,7 +438,7 @@ proc pruneDevelDb*(db: var DevelDb; live: HashSet[string]) =
     db.del base
 
 proc handToInitialUser(path: string) =
-  ## `SudoExec` makes this process root while the ledger belongs in the invoking
+  ## `SudoExec` makes this process root while the devel state file belongs in the invoking
   ## user's cache. A root-owned file cannot be rewritten by the next
   ## unprivileged run, whose write failure is silent - and a record that never
   ## advances offers the same rebuild for as long as the package is installed.
@@ -384,10 +446,10 @@ proc handToInitialUser(path: string) =
     for user in initialUser:
       discard chown(cstring(path), (Uid) user.uid, (Gid) user.gid)
 
-proc ledgerWritable*(path: string): bool =
-  ## Whether a record could be written where the ledger lives. A ledger that can
-  ## be read but not rewritten is worse than none: its records can never advance,
-  ## so every run offers the same rebuild, while Layer 1 - packaging age against
+proc develStateWritable*(path: string): bool =
+  ## Whether an entry could be written where the devel state lives. A state file that can
+  ## be read but not rewritten is worse than none: its entries can never advance,
+  ## so every run offers the same rebuild, while the AUR info-time check against
   ## the install date - converges on its own. The directory decides, because the
   ## write is a new temporary file plus a rename over the target; a directory
   ## that does not exist yet is not a refusal, since the clone creates it before
@@ -395,11 +457,11 @@ proc ledgerWritable*(path: string): bool =
   let directory = path.parentDir
   not dirExists(directory) or access(cstring(directory), W_OK) == 0
 
-proc storeDevelDb*(path: string; db: DevelDb): Option[string] =
+proc saveDevelState*(path: string; db: DevelStateData): Option[string] =
   ## Atomic: a reader sees either the old file or the new one. The pid keeps
   ## concurrent runs from sharing a temporary name. The failure is returned
-  ## rather than swallowed, because a ledger that cannot be written leaves a
-  ## record that never advances and an offer that repeats on every run.
+  ## rather than swallowed, because a state file that cannot be written leaves an
+  ## entry that never advances and an offer that repeats on every run.
   let temporary = path & "." & $getCurrentProcessId() & ".tmp"
   try:
     writeFile(temporary, $toJson(db))
@@ -414,7 +476,7 @@ proc storeDevelDb*(path: string; db: DevelDb): Option[string] =
       discard
     some(message)
 
-func revisionOf(record: Option[DevelRecord]; source: TrackedSource):
+func savedCommitOf*(record: Option[DevelStateEntry]; source: DevelGitSource):
     Option[string] =
   ## What the record already knows about this source, if anything.
   for revision in record:
@@ -423,9 +485,9 @@ func revisionOf(record: Option[DevelRecord]; source: TrackedSource):
         return some(entry.commit)
   none(string)
 
-proc stampDevelRecord*(db: var DevelDb; base: string; lastModified: int64;
-    observed: openArray[ObservedSource]): bool =
-  ## Records what this run built, and reports whether the ledger changed.
+proc updateDevelStateEntry*(db: var DevelStateData; base: string; lastModified: int64;
+    observed: openArray[GitRefAnswer]): bool =
+  ## Records what this run built, and reports whether the state changed.
   ##
   ## A source whose ref could not be read now keeps the revision the record
   ## already holds: a failed lookup is not evidence that anything moved.
@@ -439,12 +501,14 @@ proc stampDevelRecord*(db: var DevelDb; base: string; lastModified: int64;
   ## is decided by packaging age - which is where an untracked package already
   ## is - so the caller says so.
   let saved = db.opt(base)
-  var record = DevelRecord(lastModified: lastModified)
+  var record = DevelStateEntry(lastModified: lastModified)
   for o in observed:
     var kept = o.commit
     if kept.isNone:
-      kept = revisionOf(saved, o.source) # keep what the record already had
+      kept = savedCommitOf(saved, o.source) # keep what the record already had
     for commit in kept:
-      record.sources.add SourceRevision(source: o.source, commit: commit)
-  result = saved != some(record)
+      record.sources.add SavedGitRef(source: o.source, commit: commit)
+  if saved.isSome and saved.unsafeGet == record:
+    return false
   db[base] = record
+  true
