@@ -31,6 +31,7 @@ type
     cleanupAfterInstall = "CleanupAfterInstall",
     preserveBuilt = "PreserveBuilt",
     aurComments = "AurComments",
+    checkDevel = "CheckDevel",
     checkIgnored = "CheckIgnored",
     ignoreArch = "IgnoreArch",
     printAurNotFound = "PrintAurNotFound",
@@ -41,7 +42,7 @@ type
     keepBuiltPackagesOnFailure = "KeepBuiltPackagesOnFailure"
 
 const flagKeys: set[OptionKey] = {
-  OptionKey.aurComments, checkIgnored, ignoreArch, printAurNotFound,
+  OptionKey.aurComments, checkDevel, checkIgnored, ignoreArch, printAurNotFound,
   printLocalIsNewer, sudoExec, viewNoDefault, keepBuildDirOnFailure,
   keepBuiltPackagesOnFailure}
 
@@ -90,6 +91,7 @@ type
     color*: bool
     aurRepo*: string = "aur"
     aurComments*: bool
+    checkDevel*: bool
     checkIgnored*: bool
     ignoreArch*: bool
     printAurNotFound*: bool
@@ -241,6 +243,13 @@ func get[T: enum](options: PakkuOptions; key: OptionKey; default: T): T =
   ## lands here because `parseOptions` reports it instead of storing it.
   enumFromString[T](options.values[key].get("")).get(default)
 
+func develDbFile*(config: Config): string =
+  ## The devel ledger: which upstream refs each development pkgbase was built
+  ## from. It is a memo, not a source of truth -- losing it degrades precision
+  ## (records re-form on the next build), so it lives with pakku's other
+  ## per-user data rather than in a new state directory.
+  config.userCacheInitial & "/devel.json"
+
 proc ignored*(config: Config, name: string, groups: openArray[string]): bool =
   name in config.common.ignorePkgs or (config.common.ignoreGroups * groups.toHashSet).len > 0
 
@@ -343,6 +352,7 @@ proc obtainConfig*(config: PacmanConfig;
     color: color,
     aurRepo: aurRepo,
     aurComments: OptionKey.aurComments in options,
+    checkDevel: OptionKey.checkDevel in options,
     checkIgnored: OptionKey.checkIgnored in options,
     ignoreArch: OptionKey.ignoreArch in options,
     printAurNotFound: OptionKey.printAurNotFound in options,

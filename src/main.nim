@@ -197,6 +197,8 @@ proc handleHelp(operation: OperationType) =
         printHelp(%%%"build", none(string), tr"build targets from source")
         printHelp(%%%"keyserver", some("name"), tr"use name as keyserver to receive keys from")
         printHelp(%%%"noaur", none(string), tr"disable all AUR operations")
+        printHelp(%%%"devel", none(string),
+          tr"check development packages for upstream changes")
         printHelp(%%%"source", none(string), tr"retrieve PKGBUILD source")
       else:
         discard

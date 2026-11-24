@@ -13,6 +13,18 @@ Description
 -----------
 Pakku is a pacman wrapper with additional features, such as AUR support.
 
+Development packages (*-git*, *-svn*, *-hg*, *-bzr*) are not compared by
+version when AUR upgrades are considered. Their last version component is a
+commit identifier, which carries no chronological order: comparing it offers
+rebuilds that a rebuild cannot satisfy, and the offer repeats on every
+system upgrade. Pakku instead offers a development package for rebuild when the
+AUR package record changed after the installed package was built or installed.
+The AUR version of such a package is informational, and the upgrade is reported
+as +rebuild+ rather than as a version change. Upstream commits that leave the
+AUR record untouched are not detected unless +\--devel+ is enabled, which tracks
+the git refs the package was built from; without it, rebuild such a package
+explicitly with +pakku -S <name>+.
+
 Operations and Options
 ----------------------
 Pakku provides all operations and options from pacman. This page will focus
@@ -34,6 +46,17 @@ Sync Options (apply to '-S')[[SO]]
 	avoid downgrades being overwritten on updates. Caution, other versions may
 	not always build or function correctly without more changes: +
 	pakku -Sn less=1:581.2-1
+
+*\--devel*::
+	Check development packages for upstream changes. A development package is
+	offered for rebuild when the git sources it was built from moved, instead
+	of comparing version strings that end in a commit identifier. Tracking
+	needs a record written by an earlier build with this check enabled (see
+	+CheckDevel+ in linkman:pakku.conf[5]). A package without one is decided by
+	the age of its AUR entry, and starts being tracked the next time it is
+	built with the check on. Only git sources whose tracked ref moves are
+	noticed: a new tag on an unchanged ref, or a non-git source such as svn or
+	hg, needs an explicit +pakku -S <name>+.
 
 *\--keyserver* <name>::
 	Use name as keyserver to receive keys from.

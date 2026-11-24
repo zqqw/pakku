@@ -68,11 +68,12 @@ suite "flag options":
 
   test "explicit booleans override presence":
     let cfg = configOf("[options]\nAurComments = false\nCheckIgnored = yes\n" &
-      "IgnoreArch = 1\nViewNoDefault = no\n")
+      "IgnoreArch = 1\nViewNoDefault = no\nCheckDevel\n")
     check not cfg.aurComments
     check cfg.checkIgnored
     check cfg.ignoreArch
     check not cfg.viewNoDefault
+    check cfg.checkDevel
 
   test "an unparsable flag value is reported":
     check "invalid value 'off' for 'PrintAurNotFound'" in

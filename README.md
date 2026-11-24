@@ -16,6 +16,9 @@ fixes are welcome.
 - Retrieving PKGBUILDs with `pakku -Sz`
 - Reading AUR comments with `AurComments`
 - Reusing built archives and keeping them under your own cleanup policy
+- Development packages rebuilt when their AUR packaging changes or, with
+  `--devel`, when tracked upstream git refs move — never by comparing commit
+  hashes
 - Removing make dependencies after building
 - No PKGBUILD sourcing during builds. Version detection runs in a helper
   subprocess.
@@ -33,14 +36,14 @@ helper support.
 
 | | pakku | paru | yay | makepkg by hand |
 |---|---|---|---|---|
-| Binary size[^₁] | **0.87 MiB** | 7.53 MiB | 11.30 MiB | n/a |
+| Binary size[^₁] | **0.96 MiB** | 7.53 MiB | 11.30 MiB | n/a |
 | Fetched libs[^₂] | **none** | 308 crates | 27 modules | PKGBUILD sources |
 | Review before build | ✓ | ✓ | ✓ | manual |
-| Skips rebuild when archive exists | ✓ exact match | ✓ `needs_build` | ✓ `ReBuild=no` | manual |
+| Skips rebuild when archive exists | ✓ exact match, never for tracked devel | ✓ `needs_build` | ✓ `ReBuild=no` | manual |
 | Artifact policy | **✓ output, copy, cleanup** | partial | partial | manual |
 | Removes make deps | ✓ | ✓ | ✓ | manual (`-r`) |
 | AUR comments | first page | all with `-cc` | ✗ | ✗ |
-| VCS rebuild on upgrade | ✗ | ✓ | ✓ | ✗ |
+| VCS rebuild on upgrade | ✓ packaging age; refs with `--devel` | ✓ | ✓ | ✗ |
 | AUR download-only | ✗ | ✗ | ✓ | source download with `-o` |
 | Provider prompt | ✗ | ✓ | ✓ | ✗ |
 | sudoloop | ✗ | ✓ | ✓ | ✗ |
@@ -48,15 +51,17 @@ helper support.
 | Strict config errors | **✓** | warns | partial | n/a |
 | Privileged install helper | **✓ bundled, fixed argv** | external sudo | external sudo | sudo |
 
-[^₁]: Sizes, 2026-11-19: pakku 9feb327, 911,472 B; paru 2.2.0, 7,899,440 B; yay 3a25046, 11,837,664 B.
+[^₁]: Sizes, 2026-11-24: pakku 1,005,936 B (`nim c -d:release`, stripped); paru 2.2.0, 7,899,440 B; yay 3a25046, 11,837,664 B. Paru and yay are pinned to the versions shown; pakku is the tree measured on that date.
 
-[^₂]: Pakku 9feb327 has no Nimble deps. Paru 2.2.1 `Cargo.lock`: 308 crates. Yay 3a25046 `go.mod`: 27 modules. Manual makepkg fetches PKGBUILD sources.
+[^₂]: Pakku has no Nimble deps. Paru 2.2.1 `Cargo.lock`: 308 crates. Yay 3a25046 `go.mod`: 27 modules. Manual makepkg fetches PKGBUILD sources.
 
 ## Gaps
 
 - AUR comments stop at the first page.
 - Archive reuse is filename-based and silent. There is no `--rebuild` switch.
-- No VCS rebuild on upgrade, multi-provider prompt, download-only mode, local PKGBUILD build, sudoloop or news integration.
+- Upstream tracking covers git sources only, and only refs that move (a new tag
+  on an unchanged ref is missed). No multi-provider prompt, download-only mode,
+  local PKGBUILD build, sudoloop or news integration.
 - Search output is not column-aligned and descriptions are not truncated.
 - On non-Arch-based distributions, `-Sz` works for AUR packages only and `-Sn` does not work.
 

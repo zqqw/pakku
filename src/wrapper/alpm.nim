@@ -82,6 +82,12 @@ proc name*(pkg: ptr AlpmPackage): cstring
 proc version*(pkg: ptr AlpmPackage): cstring
   {.cdecl, importc: "alpm_pkg_get_version".}
 
+proc builddate*(pkg: ptr AlpmPackage): int64
+  {.cdecl, importc: "alpm_pkg_get_builddate".}
+
+proc installdate*(pkg: ptr AlpmPackage): int64
+  {.cdecl, importc: "alpm_pkg_get_installdate".}
+
 proc arch*(pkg: ptr AlpmPackage): cstring
   {.cdecl, importc: "alpm_pkg_get_arch".}
 

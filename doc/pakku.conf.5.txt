@@ -43,6 +43,18 @@ Options
 *AurComments*::
 	Download and display comments for AUR packages.
 
+*CheckDevel*::
+	Check development packages for upstream changes during AUR upgrades. A
+	development package (one named +-git+, +-svn+, +-hg+ or +-bzr+, or already
+	tracked) is offered for rebuild when its AUR entry changed after the
+	installed copy was built, and, for a tracked package, when the git sources
+	it was built from moved. Pakku records the resolved refs in +devel.json+
+	under the user cache directory after a successful build of a PKGBUILD that
+	defines a +pkgver()+ function. A package with no record yet is decided by
+	the age of its AUR entry alone, and starts being tracked the next time it
+	is built with this check enabled. Upstream changes are only detected for
+	git sources, and only when a tracked ref moves.
+
 *CheckIgnored*::
 	Check ignored packages for updates in AUR. Pakku will be able to warn
 	about ignored package upgrade.
