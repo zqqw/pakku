@@ -2028,7 +2028,8 @@ proc printDevelQueryUpgrades*(config: Config; quiet: bool): int =
   var checkedBases = initHashSet[string]()
   for info in rpcInfos:
     for record in develDb.opt(info.base):
-      if record.sources.len > 0 and not checkedBases.containsOrIncl(info.base):
+      if record.sources.len > 0 and not config.develIgnored(info.name) and
+          not checkedBases.containsOrIncl(info.base):
         candidates.add info
   let observedGitRefs = checkDevelGitRefs(config, develDb, candidates, true)
   let rpcTable = rpcInfos.mapIt((it.name, it)).toTable
