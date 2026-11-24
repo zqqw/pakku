@@ -55,6 +55,17 @@ Options
 	Upstream changes are only detected for git sources, and only when a recorded
 	ref target changes.
 
+*IgnoreDevel*::
+	Package names or glob patterns whose devel-specific offers are ignored.
+	An ignored package is still considered by ordinary version comparison.
+	Names are separated by whitespace or commas; `*` and `?` are wildcards.
+
+*IgnoreDevelSource*::
+	Git source URL glob patterns that are excluded from ref checks and from
+	saved devel state. Useful for unversioned secondary sources that would
+	otherwise make a package look stale. Separate patterns by whitespace or
+	commas.
+
 *CheckIgnored*::
 	Check ignored packages for updates in AUR. Pakku will be able to warn
 	about ignored package upgrade.

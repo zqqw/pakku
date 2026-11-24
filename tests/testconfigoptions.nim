@@ -79,6 +79,24 @@ suite "flag options":
     check "invalid value 'off' for 'PrintAurNotFound'" in
       errorOf("[options]\nPrintAurNotFound = off\n")
 
+suite "devel ignore options":
+  test "ignore lists are parsed from whitespace or commas":
+    let cfg = configOf("[options]\n" &
+      "IgnoreDevel = foo-git bar-*\n" &
+      "IgnoreDevelSource = https://bad.example/*, *://mirror/*\n")
+    check cfg.ignoreDevel == @["foo-git", "bar-*"]
+    check cfg.ignoreDevelSource == @["https://bad.example/*", "*://mirror/*"]
+
+  test "ignore patterns match package names and git URLs":
+    let cfg = configOf("[options]\n" &
+      "IgnoreDevel = foo-* exact-git\n" &
+      "IgnoreDevelSource = *://bad.example/*\n")
+    check cfg.develIgnored("foo-git")
+    check cfg.develIgnored("exact-git")
+    check not cfg.develIgnored("bar-git")
+    check cfg.develSourceIgnored("https://bad.example/x.git")
+    check not cfg.develSourceIgnored("https://good.example/x.git")
+
 suite "diagnostics":
   test "an unknown key names the option and the file":
     let message = errorOf("[options]\nFrobnicate = 1\n")

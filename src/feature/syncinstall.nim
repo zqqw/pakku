@@ -1218,8 +1218,10 @@ proc probeDevelState(config: Config; basePackages: openArray[seq[PackageInfo]];
     if not definesPkgver(pkgbuild):
       result.noPkgverBases.incl base
       continue
-    let sources = gitSources(readIfPresent(dir & "/.SRCINFO"),
+    let parsedSources = gitSources(readIfPresent(dir & "/.SRCINFO"),
       config.common.arch)
+    let sources = parsedSources.filterIt(not config.develSourceIgnored(it.url))
+
     let prior = devel.observedGitRefs.opt(base)
     if prior.isSome and prior.unsafeGet.describes(sources):
       result.observedGitRefs[base] = prior.unsafeGet
@@ -1609,7 +1611,8 @@ proc printAllWarnings(config: Config; installed: seq[Installed];
           # A development package's version says nothing about which way it
           # moved, so the downgrade wording would be a guess.
           if vercmp(cstring(newVer), cstring(instVer)) < 0 and
-              not (pkgInfo.rpc.name.hasDevelSuffix or pkgInfo.rpc.base in develDb):
+              (config.develIgnored(pkgInfo.rpc.name) or
+                not (pkgInfo.rpc.name.hasDevelSuffix or pkgInfo.rpc.base in develDb)):
             printWarning(config.color,
               tra("%s: downgrading from version %s to version %s\n") %
               [pkgInfo.rpc.name, instVer, newVer])
@@ -1763,7 +1766,11 @@ proc checkDevelGitRefs(config: Config; develDb: DevelStateData;
     if record.unsafeGet.sources.len == 0:
       continue                  # packaging gate only: nothing to look up
     # Several packages of one base share its sources: one lookup, one warning.
-    discard batch.add(candidate.base, record.unsafeGet.sources.mapIt(it.source))
+    let sources = record.unsafeGet.sources.mapIt(it.source).filterIt(
+      not config.develSourceIgnored(it.url))
+    if sources.len == 0:
+      continue
+    discard batch.add(candidate.base, sources)
 
   if batch.len > 0:
     printColon(config.color, tr"checking development packages...")
@@ -1832,7 +1839,8 @@ proc obtainAurPackageInfos(config: Config; rpcInfos: seq[RpcPackageInfo];
     if upgradeCount > 0:
       for i in rpcInfos:
         if not targetRefs.anyIt(it.isProvidedBy(i.toPackageReference, true)) and
-            (i.name.hasDevelSuffix or i.base in develDb):
+            (i.name.hasDevelSuffix or i.base in develDb) and
+            not config.develIgnored(i.name):
           candidates.add i
     checkDevelGitRefs(config, develDb, candidates, checkGitRefs)
 
@@ -1847,7 +1855,8 @@ proc obtainAurPackageInfos(config: Config; rpcInfos: seq[RpcPackageInfo];
           continue
         let checkRes = installed.checkNeeded(i.name, i.version, upgradeCount >= 2)
         let (newNeeded, localIsNewer, label) =
-          if i.name.hasDevelSuffix or i.base in develDb:
+          if (i.name.hasDevelSuffix or i.base in develDb) and
+              not config.develIgnored(i.name):
             # Development packages are never judged by version.
             let (needed, develLabel) = develUpgradeNeeded(i, installed[i.name],
               checkGitRefs, develDb, observedGitRefs.getOrDefault(i.base))
@@ -1886,6 +1895,7 @@ proc obtainAurPackageInfos(config: Config; rpcInfos: seq[RpcPackageInfo];
     printWarning(config.color, warnFmt % [upgrade.rpcInfo.name, instVer, newVer])
 
   let enrolling = develStateTargets(targetRpcInfos, develDb, checkGitRefs)
+    .filterIt(not config.develIgnored(it))
   let selectedUpgradeRpcInfos =
     if printMode or noconfirm: reqUpgrades.mapIt(it.rpcInfo)
     elif reqUpgrades.len == 0 and enrolling.len == 0: @[]
@@ -2027,8 +2037,10 @@ proc printDevelQueryUpgrades*(config: Config; quiet: bool): int =
     if not inst.foreign or config.ignored(inst.name, inst.groups):
       continue
     for info in rpcTable.opt(inst.name):
-      if not (info.name.hasDevelSuffix or info.base in develDb):
+      if not (info.name.hasDevelSuffix or info.base in develDb) or
+          config.develIgnored(info.name):
         continue
+
       let (needed, displayToken) = develUpgradeNeeded(info, inst, true,
         develDb, observedGitRefs.getOrDefault(info.base))
       if needed:

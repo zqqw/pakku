@@ -252,6 +252,20 @@ suite "probing a base before the build":
     check db["foo-git"].lastModified == 100
     check db["foo-git"].sources.len == 0
 
+  test "an ignored git source still advances the AUR info time":
+    var config = fixtureConfig(root)
+    config.ignoreDevelSource = @["https://example.org/foo.git"]
+    discard fixtureRepo("foo-git", devPkgbuild, srcInfo)
+    let probed = probeDevelState(config, @[@[fixturePackage(lastModified = 200)]],
+      state(checkGitRefs = true))
+    check probed.observedGitRefs.hasKey("foo-git")
+    check probed.observedGitRefs["foo-git"].len == 0
+    updateDevelStateFromBuild(config, @[@[fixturePackage(lastModified = 200)]],
+      installOf("foo-git"), probed, state())
+    let db = loadDevelState(config.develDbFile)[0]
+    check db["foo-git"].lastModified == 200
+    check db["foo-git"].sources.len == 0
+
   test "an edited PKGBUILD is not probed":
     ## `.SRCINFO` is not regenerated after an edit, so the sources on disk no
     ## longer describe what makepkg will compile.

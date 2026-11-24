@@ -32,6 +32,9 @@ type
     preserveBuilt = "PreserveBuilt",
     aurComments = "AurComments",
     checkDevel = "CheckDevel",
+    ignoreDevel = "IgnoreDevel",
+    ignoreDevelSource = "IgnoreDevelSource",
+
     checkIgnored = "CheckIgnored",
     ignoreArch = "IgnoreArch",
     printAurNotFound = "PrintAurNotFound",
@@ -92,6 +95,8 @@ type
     aurRepo*: string = "aur"
     aurComments*: bool
     checkDevel*: bool
+    ignoreDevel*: seq[string]
+    ignoreDevelSource*: seq[string]
     checkIgnored*: bool
     ignoreArch*: bool
     printAurNotFound*: bool
@@ -250,6 +255,45 @@ func develDbFile*(config: Config): string =
   ## per-user data rather than in a new state directory.
   config.userCacheInitial & "/devel.json"
 
+func optionList(options: PakkuOptions; key: OptionKey): seq[string] =
+  for token in options[key].get("").replace(',', ' ').splitWhitespace:
+    result.add token
+
+func matchesPattern(pattern, value: string): bool =
+  var p = 0
+  var v = 0
+  var star = -1
+  var retry = 0
+  while v < value.len:
+    if p < pattern.len and (pattern[p] == '?' or pattern[p] == value[v]):
+      inc p
+      inc v
+    elif p < pattern.len and pattern[p] == '*':
+      star = p
+      retry = v
+      inc p
+    elif star >= 0:
+      p = star + 1
+      inc retry
+      v = retry
+    else:
+      return false
+  while p < pattern.len and pattern[p] == '*':
+    inc p
+  p == pattern.len
+
+proc develIgnored*(config: Config; name: string): bool =
+  for pattern in config.ignoreDevel:
+    if matchesPattern(pattern, name):
+      return true
+  false
+
+proc develSourceIgnored*(config: Config; url: string): bool =
+  for pattern in config.ignoreDevelSource:
+    if matchesPattern(pattern, url):
+      return true
+  false
+
 proc ignored*(config: Config, name: string, groups: openArray[string]): bool =
   name in config.common.ignorePkgs or (config.common.ignoreGroups * groups.toHashSet).len > 0
 
@@ -353,6 +397,8 @@ proc obtainConfig*(config: PacmanConfig;
     aurRepo: aurRepo,
     aurComments: OptionKey.aurComments in options,
     checkDevel: OptionKey.checkDevel in options,
+    ignoreDevel: optionList(options, OptionKey.ignoreDevel),
+    ignoreDevelSource: optionList(options, OptionKey.ignoreDevelSource),
     checkIgnored: OptionKey.checkIgnored in options,
     ignoreArch: OptionKey.ignoreArch in options,
     printAurNotFound: OptionKey.printAurNotFound in options,
