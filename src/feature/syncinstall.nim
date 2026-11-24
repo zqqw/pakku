@@ -1289,8 +1289,9 @@ proc updateDevelStateFromBuild(config: Config; basePackages: openArray[seq[Packa
     for gitRef in settlement.sources:
       if gitRef.commit.isNone and
           (saved.isNone or savedCommitOf(saved, gitRef.source).isNone):
-        printWarning(config.color, tr"$#: could not read git ref at $#" %
-          [settlement.name, gitRef.source.url])
+        let detail = gitRef.error.map(e => " (" & e & ")").get("")
+        printWarning(config.color, tr"$#: could not read git ref at $#$#" %
+          [settlement.name, gitRef.source.url, detail])
   if not changed:
     return
   for failure in saveDevelState(config.develDbFile, db[]):
@@ -1774,8 +1775,9 @@ proc checkDevelGitRefs(config: Config; develDb: DevelStateData;
   for base, observedGitRefs in result:
     for entry in observedGitRefs:
       if entry.commit.isNone:
-        printWarning(config.color, tr"$#: could not read git ref at $#" %
-          [base, entry.source.url])
+        let detail = entry.error.map(e => " (" & e & ")").get("")
+        printWarning(config.color, tr"$#: could not read git ref at $#$#" %
+          [base, entry.source.url, detail])
 
   if untracked.len > 0:
     printWarning(config.color,

@@ -111,6 +111,13 @@ suite "remote ref parsing":
     check DevelGitSource(url: "u", branch: some("dev")).refNames ==
       @["refs/heads/dev", "refs/tags/dev"]
 
+  test "a failed lookup reports a diagnostic":
+    let answers = lookupRemoteRefs([DevelGitSource(
+      url: "git://127.0.0.1:1/nope.git", branch: none(string))])
+    check answers.len == 1
+    check answers[0].commit.isNone
+    check answers[0].error.isSome
+
 suite "branch values":
   test "glob characters are dropped, not made into patterns":
     let info = """

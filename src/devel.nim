@@ -40,6 +40,7 @@ type
     ## What a lookup answered for one source now.
     source*: DevelGitSource
     commit*: Option[string] ## none = the ref could not be verified
+    error*: Option[string] ## first git diagnostic when verification failed
 
 const
   gitProtocols = ["git", "https", "http", "ssh"]
@@ -201,6 +202,13 @@ func parseRemoteRef*(output: string; names: openArray[string]): Option[string] =
   none(string)
 
 
+func firstDiagnostic(output: string): Option[string] =
+  for line in splitLines(output):
+    let trimmed = line.strip
+    if trimmed.len > 0:
+      return some(trimmed)
+  none(string)
+
 func gitRefsChanged*(record: DevelStateEntry;
     observed: openArray[GitRefAnswer]): bool =
   ## Whether any observable ref is unknown to the record or points elsewhere.
@@ -253,7 +261,7 @@ proc lookupRemoteRefs*(sources: openArray[DevelGitSource]): seq[GitRefAnswer] =
   ## flag, and `GIT_ALLOW_PROTOCOL` keeps `ext::` transports out of reach.
   result = newSeq[GitRefAnswer](sources.len)
   for index, source in sources:
-    result[index] = GitRefAnswer(source: source, commit: none(string))
+    result[index] = GitRefAnswer(source: source, commit: none(string), error: none(string))
   if sources.len == 0:
     return
 
@@ -304,11 +312,19 @@ proc lookupRemoteRefs*(sources: openArray[DevelGitSource]): seq[GitRefAnswer] =
     try:
       let remaining = observeTimeoutMs -
         (getMonoTime() - started).inMilliseconds.int
-      if waitForExit(entry.process, max(remaining, 1)) == 0:
+      let code = waitForExit(entry.process, max(remaining, 1))
+      if code == 0:
         result[entry.index].commit = parseRemoteRef(
           entry.process.outputStream.readAll(), entry.names)
+      elif entry.process.peekExitCode == -1:
+        entry.process.terminate()
+        discard waitForExit(entry.process)
+        result[entry.index].error = some("timed out")
+      else:
+        result[entry.index].error = firstDiagnostic(
+          entry.process.outputStream.readAll())
     except CatchableError:
-      discard
+      result[entry.index].error = some(getCurrentExceptionMsg())
     finally:
       entry.process.close()
 
