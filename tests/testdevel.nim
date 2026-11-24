@@ -294,16 +294,18 @@ suite "ledger":
     check develStateWritable(path)
 
   test "a directory that cannot be written is refused":
-    if posix.getuid() == 0: skip()   ## root ignores directory permissions
-    let parent = getTempDir() / "pakku-devel-locked"
-    removeDir(parent)
-    createDir(parent)
-    setFilePermissions(parent, {fpUserRead, fpUserExec})
-    try:
-      check not develStateWritable(parent / "devel.json")
-    finally:
-      setFilePermissions(parent, {fpUserRead, fpUserWrite, fpUserExec})
+    if posix.getuid() == 0:
+      skip() ## root ignores directory permissions, and skip() does not stop execution
+    else:
+      let parent = getTempDir() / "pakku-devel-locked"
       removeDir(parent)
+      createDir(parent)
+      setFilePermissions(parent, {fpUserRead, fpUserExec})
+      try:
+        check not develStateWritable(parent / "devel.json")
+      finally:
+        setFilePermissions(parent, {fpUserRead, fpUserWrite, fpUserExec})
+        removeDir(parent)
 
 suite "observing a remote":
   ## A repository on the loopback interface stands in for the network. It has to
@@ -367,58 +369,68 @@ suite "observing a remote":
       daemon.close()
 
   test "a branch, a tag named as a branch, and the remote head all resolve":
-    if gitExe.len == 0: skip()
-    let dev = git("-C", remote, "rev-parse", "dev")
-    let nested = git("-C", remote, "rev-parse", "a/dev")
-    let tag = git("-C", remote, "rev-parse", "v1")
-    let head = git("-C", remote, "rev-parse", "HEAD")
-    check dev != nested
-    let observedGitRefs = lookupRemoteRefs([
-      DevelGitSource(url: url, branch: some("dev")),
-      DevelGitSource(url: url, branch: some("a/dev")),
-      DevelGitSource(url: url, branch: some("v1")),
-      DevelGitSource(url: url, branch: none(string))])
-    check observedGitRefs.mapIt(it.commit) ==
-      @[some(dev), some(nested), some(tag), some(head)]
+    if gitExe.len == 0:
+      skip()
+    else:
+      let dev = git("-C", remote, "rev-parse", "dev")
+      let nested = git("-C", remote, "rev-parse", "a/dev")
+      let tag = git("-C", remote, "rev-parse", "v1")
+      let head = git("-C", remote, "rev-parse", "HEAD")
+      check dev != nested
+      let observedGitRefs = lookupRemoteRefs([
+        DevelGitSource(url: url, branch: some("dev")),
+        DevelGitSource(url: url, branch: some("a/dev")),
+        DevelGitSource(url: url, branch: some("v1")),
+        DevelGitSource(url: url, branch: none(string))])
+      check observedGitRefs.mapIt(it.commit) ==
+        @[some(dev), some(nested), some(tag), some(head)]
 
   test "one lookup hands each key its own slice, in order":
-    if gitExe.len == 0: skip()
-    let dev = DevelGitSource(url: url, branch: some("dev"))
-    let tag = DevelGitSource(url: url, branch: some("v1"))
-    let head = DevelGitSource(url: url, branch: none(string))
-    var batch: ObservationBatch
-    check batch.add("branch-and-tag", [dev, tag])
-    check batch.add("head", [head])
-    ## A base seen twice in the candidate list is looked up once.
-    check not batch.add("branch-and-tag", [head])
-    let slices = batch.resolve()
-    check slices["branch-and-tag"] == lookupRemoteRefs([dev, tag])
-    check slices["head"] == lookupRemoteRefs([head])
+    if gitExe.len == 0:
+      skip()
+    else:
+      let dev = DevelGitSource(url: url, branch: some("dev"))
+      let tag = DevelGitSource(url: url, branch: some("v1"))
+      let head = DevelGitSource(url: url, branch: none(string))
+      var batch: ObservationBatch
+      check batch.add("branch-and-tag", [dev, tag])
+      check batch.add("head", [head])
+      ## A base seen twice in the candidate list is looked up once.
+      check not batch.add("branch-and-tag", [head])
+      let slices = batch.resolve()
+      check slices["branch-and-tag"] == lookupRemoteRefs([dev, tag])
+      check slices["head"] == lookupRemoteRefs([head])
 
   test "a ref that does not exist is unverifiable, not a move":
-    if gitExe.len == 0: skip()
-    check lookupRemoteRefs([DevelGitSource(url: url, branch: some("nosuch"))])[0]
-      .commit.isNone
+    if gitExe.len == 0:
+      skip()
+    else:
+      check lookupRemoteRefs([DevelGitSource(url: url, branch: some("nosuch"))])[0]
+        .commit.isNone
 
   test "a URL that looks like an option stays a URL":
-    if gitExe.len == 0: skip()
-    let marker = root / "should-not-exist"
-    check lookupRemoteRefs([DevelGitSource(
-      url: "--upload-pack=touch " & marker)])[0].commit.isNone
-    check not fileExists(marker)
+    if gitExe.len == 0:
+      skip()
+    else:
+      let marker = root / "should-not-exist"
+      check lookupRemoteRefs([DevelGitSource(
+        url: "--upload-pack=touch " & marker)])[0].commit.isNone
+      check not fileExists(marker)
 
   test "a ref check survives a deleted working directory":
     ## git aborts before contacting a remote when getcwd() fails, so its
     ## children must not inherit a vanished caller cwd.
-    if gitExe.len == 0: skip()
-    let expected = git("-C", remote, "rev-parse", "HEAD")
-    let old = getCurrentDir()
-    let gone = root / "gone"
-    createDir(gone)
-    try:
-      setCurrentDir(gone)
-      removeDir(gone)
-      let observedGitRefs = lookupRemoteRefs([DevelGitSource(url: url, branch: none(string))])
-      check observedGitRefs[0].commit == some(expected)
-    finally:
-      setCurrentDir(old)
+    if gitExe.len == 0:
+      skip()
+    else:
+      let expected = git("-C", remote, "rev-parse", "HEAD")
+      let old = getCurrentDir()
+      let gone = root / "gone"
+      createDir(gone)
+      try:
+        setCurrentDir(gone)
+        removeDir(gone)
+        let observedGitRefs = lookupRemoteRefs([DevelGitSource(url: url, branch: none(string))])
+        check observedGitRefs[0].commit == some(expected)
+      finally:
+        setCurrentDir(old)
