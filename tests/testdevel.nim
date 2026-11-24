@@ -1,6 +1,9 @@
 import std/[options, os, osproc, posix, sequtils, sets, strutils, tables, unittest]
 import ../src/devel
 
+func sourceList(info, arch: string): seq[DevelGitSource] =
+  gitSourceEntries(info, arch).toSeq()
+
 ## Source parsing, the devel decision, the ledger codec and the ref lookup. No
 ## network, no pacman, no ALPM: these are the parts of `--devel` that can be
 ## pinned down without an AUR.
@@ -14,7 +17,7 @@ pkgbase = rmlint-git
 """
 
   test "name:: prefix and git+ transport normalise to a git URL":
-    check gitSources(rmlint, "x86_64") ==
+    check sourceList(rmlint, "x86_64") ==
       @[DevelGitSource(url: "https://github.com/sahib/rmlint.git",
         branch: none(string))]
 
@@ -25,7 +28,7 @@ pkgbase = rmlint-git
 	source = git+https://example.org/c.git#commit=abc
 	source = git+https://example.org/d.git#unknown=1
 """
-    check gitSources(info, "x86_64") ==
+    check sourceList(info, "x86_64") ==
       @[DevelGitSource(url: "https://example.org/a.git", branch: some("dev"))]
 
   test "non-git and unusable sources are dropped":
@@ -37,7 +40,7 @@ pkgbase = rmlint-git
 	source = git+file:///etc/passwd
 	source = git+https://
 """
-    check gitSources(info, "x86_64").len == 0
+    check sourceList(info, "x86_64").len == 0
 
   test "only source and source_<arch> are read":
     let info = """
@@ -45,9 +48,9 @@ pkgbase = rmlint-git
 	source_x86_64 = git+https://example.org/x86.git
 	source_aarch64 = git+https://example.org/arm.git
 """
-    check gitSources(info, "x86_64").mapIt(it.url) ==
+    check sourceList(info, "x86_64").mapIt(it.url) ==
       @["https://example.org/base.git", "https://example.org/x86.git"]
-    check gitSources(info, "aarch64").mapIt(it.url) ==
+    check sourceList(info, "aarch64").mapIt(it.url) ==
       @["https://example.org/base.git", "https://example.org/arm.git"]
 
   test "duplicates collapse and queries are stripped":
@@ -57,7 +60,7 @@ pkgbase = rmlint-git
 	source = git://example.org/b.git
 	source = git+ssh://example.org/c.git
 """
-    check gitSources(info, "x86_64") == @[
+    check sourceList(info, "x86_64") == @[
       DevelGitSource(url: "https://example.org/a.git", branch: none(string)),
       DevelGitSource(url: "git://example.org/b.git", branch: none(string)),
       DevelGitSource(url: "ssh://example.org/c.git", branch: none(string))]
@@ -137,7 +140,7 @@ suite "branch values":
 	source = git+https://example.org/n.git#branch=@
 	source = git+https://example.org/o.git#branch=a//b
 """
-    check gitSources(info, "x86_64").mapIt(it.branch) ==
+    check sourceList(info, "x86_64").mapIt(it.branch) ==
       @[some("dev/x"), some("main"), some("team@host")]
 
 
@@ -194,12 +197,13 @@ suite "ledger":
 
   test "stamp, store, load round-trips":
     var db = initOrderedTable[string, DevelStateEntry]()
-    discard db.updateDevelStateEntry(base, 100, observedGitRefs)
+    let stamp = 2_147_483_648'i64
+    discard db.updateDevelStateEntry(base, stamp, observedGitRefs)
     discard saveDevelState(path, db)
     let loaded = loadDevelState(path)[0]
 
     check loaded == db
-    check loaded[base].lastModified == 100
+    check loaded[base].lastModified == stamp
     check loaded[base].sources == @[SavedGitRef(source: source,
       commit: "aaaaaaaa")]
 
@@ -211,7 +215,9 @@ suite "ledger":
     check broken[0].len == 0
     check broken[1].isSome
     writeFile(path, """{"schema": 99, "packages": {"x": {}}}""")
-    check loadDevelState(path)[0].len == 0
+    let future = loadDevelState(path)
+    check future[0].len == 0
+    check future[1].isSome
     writeFile(path, """{"schema": 1, "packages": {"x": {"lastModified": 1}}}""")
     check loadDevelState(path)[0].len == 0
 

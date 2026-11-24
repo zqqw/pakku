@@ -56,7 +56,7 @@ let dir = pkgbuildDir(cfg, group[0])
 echo "pkgbuild dir: ", dir
 echo "PKGBUILD intact: ", pkgbuildIntact(cfg, dir)
 echo "defines pkgver(): ", definesPkgver(readIfPresent(dir & "/PKGBUILD"))
-let sources = gitSources(readIfPresent(dir & "/.SRCINFO"), cfg.common.arch)
+let sources = gitSourceEntries(readIfPresent(dir & "/.SRCINFO"), cfg.common.arch).toSeq()
 echo "trackable sources: ", sources
 
 step "probe: real refs before a build"

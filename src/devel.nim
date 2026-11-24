@@ -50,15 +50,26 @@ const
   hexDigits = {'0'..'9', 'a'..'f', 'A'..'F'}
   refForbidden = {'\x00'..'\x20', '\x7f', '~', '^', ':', '?', '*', '[', '\\'}
 
-func isRefComponent(part: string): bool =
-  part.len > 0 and part[0] != '.' and part[^1] != '.' and
-    not part.endsWith(".lock")
+func endsWithLock(part: openArray[char]): bool =
+  const suffix = ".lock"
+  if part.len < suffix.len:
+    return false
+  for index, character in suffix:
+    if part[part.len - suffix.len + index] != character:
+      return false
+  true
+
+func isRefComponent(part: openArray[char]): bool =
+  part.len > 0 and part[0] != '.' and part[part.high] != '.' and
+    not endsWithLock(part)
 
 func isRefName(name: string): bool =
   ## `#branch=` is handed to `git ls-remote` as a ref name, so every component
   ## has to satisfy git's rules. A bare `*` is the dangerous case: git matches
   ## patterns against ref tails and would list every ref in the repository.
-  if name.len == 0 or name == "@" or not isRefComponent(name):
+  if name.len == 0 or name == "@":
+    return false
+  if not isRefComponent(name.toOpenArray(0, name.high)):
     return false
   if name.contains("..") or name.contains("@{"):
     return false
@@ -67,10 +78,14 @@ func isRefName(name: string): bool =
     if character in refForbidden:
       return false
     if character == '/':
-      if not isRefComponent(name[componentStart ..< index]):
+      if index == componentStart:
+        return false
+      if not isRefComponent(name.toOpenArray(componentStart, index - 1)):
         return false
       componentStart = index + 1
-  isRefComponent(name[componentStart .. ^1])
+  if componentStart >= name.len:
+    return false
+  isRefComponent(name.toOpenArray(componentStart, name.high))
 
 func parseSourceEntry(value: string): Option[DevelGitSource] =
   ## `<name>::<scheme>+<transport>://<path>[?query][#branch=<ref>]`, with the
@@ -118,9 +133,11 @@ func parseSourceEntry(value: string): Option[DevelGitSource] =
 
   some(DevelGitSource(url: url, branch: branch))
 
-func gitSources*(srcInfo: string; arch: string): seq[DevelGitSource] =
-  ## Git sources of the current architecture, deduplicated.
+iterator gitSourceEntries*(srcInfo: string; arch: string): DevelGitSource =
+  ## Yields each deduplicated git source of the current architecture so callers
+  ## can filter while parsing instead of materializing an intermediate seq.
   let archKey = "source_" & arch
+  var seen = initHashSet[string]()
   for line in srcInfo.splitLines:
     let stripped = line.strip
     let separator = stripped.find(" = ")
@@ -129,9 +146,10 @@ func gitSources*(srcInfo: string; arch: string): seq[DevelGitSource] =
     let key = stripped[0 ..< separator]
     if key != "source" and key != archKey:
       continue
-    let source = parseSourceEntry(stripped[separator + 3 .. ^1])
-    if source.isSome and source.unsafeGet notin result:
-      result.add source.unsafeGet
+    for source in parseSourceEntry(stripped[separator + 3 .. ^1]):
+      let identity = source.url & "\0" & source.branch.get("")
+      if not seen.containsOrIncl(identity):
+        yield source
 
 func hasAt(text: string; at: int; part: string): bool =
   ## `strutils.startsWith` has no offset; comparing in place avoids a slice per
@@ -181,6 +199,9 @@ func refNames*(source: DevelGitSource): seq[string] =
     return @["refs/heads/" & branch, "refs/tags/" & branch]
   @["HEAD"]
 
+func isRecordedCommit(commit: openArray[char]): bool =
+  commit.len in 7 .. 64 and commit.allIt(it in hexDigits)
+
 func parseRemoteRef*(output: string; names: openArray[string]): Option[string] =
   ## The object id of the first of `names` that the remote reported, when it
   ## looks like an object id. Matching is by whole ref name, so a line about
@@ -197,17 +218,17 @@ func parseRemoteRef*(output: string; names: openArray[string]): Option[string] =
       if count < 2 or fields[1] != name:
         continue
       let hash = fields[0]
-      if hash.len >= 7 and hash.len <= 64 and hash.allIt(it in hexDigits):
+      if isRecordedCommit(hash.toOpenArray(0, hash.high)):
         return some(hash)
   none(string)
 
 
-func firstDiagnostic(output: string): Option[string] =
+func firstDiagnostic(output: string; code: int): Option[string] =
   for line in splitLines(output):
     let trimmed = line.strip
     if trimmed.len > 0:
       return some(trimmed)
-  none(string)
+  some("git exited with status " & $code)
 
 func gitRefsChanged*(record: DevelStateEntry;
     observed: openArray[GitRefAnswer]): bool =
@@ -259,13 +280,12 @@ proc lookupRemoteRefs*(sources: openArray[DevelGitSource]): seq[GitRefAnswer] =
   ## a per-process timeout would serialise a dead network into minutes. `--`
   ## terminates options, so an AUR-supplied URL or ref can never become a git
   ## flag, and `GIT_ALLOW_PROTOCOL` keeps `ext::` transports out of reach.
-  result = newSeq[GitRefAnswer](sources.len)
-  for index, source in sources:
-    result[index] = GitRefAnswer(source: source, commit: none(string), error: none(string))
+  result = sources.mapIt(GitRefAnswer(source: it,
+    commit: none(string), error: none(string)))
   if sources.len == 0:
     return
 
-  let started = getMonoTime()
+  let deadline = getMonoTime() + initDuration(milliseconds = observeTimeoutMs)
   let environment = gitEnvironment()
   let observeDir = block:
     let home =
@@ -281,7 +301,7 @@ proc lookupRemoteRefs*(sources: openArray[DevelGitSource]): seq[GitRefAnswer] =
     try: some(getCurrentDir())
     except CatchableError: none(string)
 
-  var running: seq[RunningObservation]
+  var running = newSeqOfCap[RunningObservation](sources.len)
   try:
     try:
       setCurrentDir(observeDir)
@@ -296,13 +316,15 @@ proc lookupRemoteRefs*(sources: openArray[DevelGitSource]): seq[GitRefAnswer] =
       # so neither a URL nor a ref can become a flag.
       try:
         let names = refNames(source)
-        let command = @["ls-remote", "--no-tags", "--", source.url] & names
+        var command = newSeqOfCap[string](4 + names.len)
+        command.add ["ls-remote", "--no-tags", "--", source.url]
+        command.add names
         running.add RunningObservation(index: index, names: names,
           process: startProcess(gitCmd, args = command, env = environment,
             workingDir = observeDir, options = {poStdErrToStdOut, poUsePath}))
 
       except CatchableError:
-        discard # stays unverifiable
+        result[index].error = some(getCurrentExceptionMsg())
   finally:
     for path in previousDir:
       try: setCurrentDir(path)
@@ -310,19 +332,30 @@ proc lookupRemoteRefs*(sources: openArray[DevelGitSource]): seq[GitRefAnswer] =
 
   for entry in running:
     try:
-      let remaining = observeTimeoutMs -
-        (getMonoTime() - started).inMilliseconds.int
-      let code = waitForExit(entry.process, max(remaining, 1))
-      if code == 0:
-        result[entry.index].commit = parseRemoteRef(
-          entry.process.outputStream.readAll(), entry.names)
-      elif entry.process.peekExitCode == -1:
-        entry.process.terminate()
-        discard waitForExit(entry.process)
-        result[entry.index].error = some("timed out")
-      else:
-        result[entry.index].error = firstDiagnostic(
-          entry.process.outputStream.readAll())
+      var code = -1
+      while true:
+        code = entry.process.peekExitCode
+        if code != -1:
+          break
+        if getMonoTime() >= deadline:
+          result[entry.index].error = some("timed out")
+          try:
+            entry.process.terminate()
+          except CatchableError:
+            discard
+          try:
+            discard waitForExit(entry.process)
+          except CatchableError:
+            discard
+          break
+        sleep(10)
+      if code != -1:
+        if code == 0:
+          result[entry.index].commit = parseRemoteRef(
+            entry.process.outputStream.readAll(), entry.names)
+        else:
+          result[entry.index].error = firstDiagnostic(
+            entry.process.outputStream.readAll(), code)
     except CatchableError:
       result[entry.index].error = some(getCurrentExceptionMsg())
     finally:
@@ -381,9 +414,6 @@ func toJson(db: DevelStateData): JsonNode =
     result["packages"][base] = %*{
       "lastModified": record.lastModified, "sources": sources}
 
-func isRecordedCommit(commit: string): bool =
-  commit.len in 7 .. 64 and commit.allIt(it in hexDigits)
-
 func isRecordedSource(source: DevelGitSource): bool =
   let schemeAt = source.url.find("://")
   if schemeAt < 1 or source.url.len <= schemeAt + 3 or
@@ -394,14 +424,18 @@ func isRecordedSource(source: DevelGitSource): bool =
       return false
   true
 
-func fromJson(node: JsonNode): DevelStateData =
-  ## Whatever is not devel state this version wrote is ignored: a hand-edited or
-  ## half-written file degrades to "no records", never to a crash.
-  if node == nil or node.kind != JObject or node{"schema"}.getInt(0) != 1:
-    return
+func fromJson(node: JsonNode): (DevelStateData, Option[string]) =
+  ## Invalid entries are skipped so valid ones survive. A file this version did
+  ## not write is refused as a whole: overwriting a future schema would destroy
+  ## state the next pakku still understands.
+  if node == nil or node.kind != JObject:
+    return (result[0], some(tr"devel state is not an object"))
+  if node{"schema"}.getInt(0) != 1:
+    return (result[0], some(tr"unsupported devel state schema"))
   let packages = node{"packages"}
   if packages == nil or packages.kind != JObject:
-    return
+    return (result[0], some(tr"devel state has no package entries"))
+
 
   for base, record in packages.pairs:
     if record == nil or record.kind != JObject:
@@ -412,7 +446,7 @@ func fromJson(node: JsonNode): DevelStateData =
     let sourcesNode = record{"sources"}
     if sourcesNode == nil or sourcesNode.kind != JArray:
       continue
-    var parsed = DevelStateEntry(lastModified: stampNode.getInt)
+    var parsed = DevelStateEntry(lastModified: stampNode.getBiggestInt)
     for entry in sourcesNode.items:
       if entry == nil or entry.kind != JObject:
         continue
@@ -423,23 +457,23 @@ func fromJson(node: JsonNode): DevelStateData =
       let branch = entry{"branch"}.getStr
       let source = DevelGitSource(url: url,
         branch: (if branch.len > 0: some(branch) else: none(string)))
-      if not isRecordedSource(source) or not isRecordedCommit(commit):
+      if not isRecordedSource(source) or
+          not isRecordedCommit(commit.toOpenArray(0, commit.high)):
         continue
       parsed.sources.add SavedGitRef(source: source, commit: commit)
-    result[base] = parsed
+    result[0][base] = parsed
 
 proc loadDevelState*(path: string): (DevelStateData, Option[string]) =
   ## An absent file is normal empty devel state. An existing file that cannot be
-  ## read or decoded is also empty, but carries the reason so callers can warn:
-  ## silently dropping entries hides a broken state file.
+  ## read or decoded is also empty, but carries the reason so callers can warn
+  ## and never rewrite it: silently replacing state hides a broken state file.
   var db: DevelStateData
   if not fileExists(path):
     return (db, none(string))
   try:
-    db = fromJson(parseFile(path))
+    fromJson(parseFile(path))
   except CatchableError:
-    return (db, some(getCurrentExceptionMsg()))
-  (db, none(string))
+    (db, some(getCurrentExceptionMsg()))
 
 proc dropUnlistedDevelEntries*(db: var DevelStateData; live: HashSet[string]) =
   ## Drops records for pkgbases the AUR no longer lists. The key has to come

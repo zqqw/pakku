@@ -1169,12 +1169,12 @@ proc pkgbuildIntact(config: Config; dir: string): bool =
   ## The user may edit it during review, including staging the edit, and
   ## `.SRCINFO` is not regenerated; recording refs from stale metadata would
   ## claim a revision the edited PKGBUILD will not build.
-  for args in @[
-      @["-C", dir, "diff", "--quiet", "--", "PKGBUILD"],
-      @["-C", dir, "diff", "--cached", "--quiet", "--", "PKGBUILD"]]:
-    if exec(config.color, @[gitCmd] & args,
-        none(string), emSilent, true).code != 0:
-      return false
+  if exec(config.color, [gitCmd, "-C", dir, "diff", "--quiet", "--", "PKGBUILD"],
+      none(string), emSilent, true).code != 0:
+    return false
+  if exec(config.color, [gitCmd, "-C", dir, "diff", "--cached", "--quiet", "--",
+      "PKGBUILD"], none(string), emSilent, true).code != 0:
+    return false
   true
 
 
@@ -1214,9 +1214,11 @@ proc probeDevelState(config: Config; basePackages: openArray[seq[PackageInfo]];
     if not definesPkgver(pkgbuild):
       result.noPkgverBases.incl base
       continue
-    let parsedSources = gitSources(readIfPresent(dir & "/.SRCINFO"),
-      config.common.arch)
-    let sources = parsedSources.filterIt(not config.develSourceIgnored(it.url))
+    let sources = collect(newSeq):
+      for source in gitSourceEntries(readIfPresent(dir & "/.SRCINFO"),
+          config.common.arch):
+        if not config.develSourceIgnored(source.url):
+          source
 
     let prior = devel.observedGitRefs.opt(base)
     if prior.isSome and prior.unsafeGet.describes(sources):
@@ -1257,7 +1259,9 @@ proc updateDevelStateFromBuild(config: Config; basePackages: openArray[seq[Packa
   ## enrols the base again. The test that decides this is a text scan, which
   ## cannot see `eval` or a sourced definition, so the record degrades instead of
   ## vanishing.
-  let installedNames = artifacts.install.mapIt(it.name).toHashSet
+  var installedNames = initHashSet[string]()
+  for target in artifacts.install:
+    installedNames.incl target.name
   var settlements: seq[DevelStateUpdate]
   for pkgInfos in basePackages:
     requireNonEmpty(pkgInfos, "updateDevelStateFromBuild")
@@ -1740,7 +1744,7 @@ proc inputLoop(config: Config; reqUpgrades: openArray[Upgrade];
     printError(config.color, tr"invalid package selection")
 
 proc checkDevelGitRefs(config: Config; develDb: DevelStateData;
-    candidates: openArray[RpcPackageInfo]; checkGitRefs: bool):
+    candidates: openArray[RpcPackageInfo]; checkGitRefs, quiet: bool):
     Table[string, seq[GitRefAnswer]] =
   ## Resolves the recorded git refs of the devel candidates, and reports the
   ## two things the user can act on: a package with no record yet, and a source
@@ -1763,26 +1767,29 @@ proc checkDevelGitRefs(config: Config; develDb: DevelStateData;
     if record.unsafeGet.sources.len == 0:
       continue                  # packaging gate only: nothing to look up
     # Several packages of one base share its sources: one lookup, one warning.
-    let sources = record.unsafeGet.sources.mapIt(it.source).filterIt(
-      not config.develSourceIgnored(it.url))
+    var sources = newSeqOfCap[DevelGitSource](record.unsafeGet.sources.len)
+    for saved in record.unsafeGet.sources:
+      if not config.develSourceIgnored(saved.source.url):
+        sources.add saved.source
     if sources.len == 0:
       continue
     discard batch.add(candidate.base, sources)
 
-  if batch.len > 0:
+  if not quiet and batch.len > 0:
     printColon(config.color, tr"checking development packages...")
   result = batch.resolve()
-  for base, observedGitRefs in result:
-    for entry in observedGitRefs:
-      if entry.commit.isNone:
-        let detail = entry.error.map(e => " (" & e & ")").get("")
-        printWarning(config.color, tr"$#: could not read git ref at $#$#" %
-          [base, entry.source.url, detail])
+  if not quiet:
+    for base, observedGitRefs in result:
+      for entry in observedGitRefs:
+        if entry.commit.isNone:
+          let detail = entry.error.map(e => " (" & e & ")").get("")
+          printWarning(config.color, tr"$#: could not read git ref at $#$#" %
+            [base, entry.source.url, detail])
 
-  if untracked.len > 0:
-    printWarning(config.color,
-      tr"devel packages with no saved state (rebuild to save git refs): $#" %
-      [untracked.deduplicate.join(", ")])
+    if untracked.len > 0:
+      printWarning(config.color,
+        tr"devel packages with no saved state (rebuild to save git refs): $#" %
+        [untracked.deduplicate.join(", ")])
 
 
 func develStateTargets(rpcInfos: openArray[RpcPackageInfo];
@@ -1840,7 +1847,7 @@ proc obtainAurPackageInfos(config: Config; rpcInfos: seq[RpcPackageInfo];
             (config.hasDevelSuffix(i.name) or i.base in develDb) and
             not config.develIgnored(i.name):
           candidates.add i
-    checkDevelGitRefs(config, develDb, candidates, checkGitRefs)
+    checkDevelGitRefs(config, develDb, candidates, checkGitRefs, false)
 
   let (upgradeStructs, localIsNewerSeq) = block:
     var upgrades: seq[Upgrade]
@@ -2017,7 +2024,7 @@ proc printDevelQueryUpgrades*(config: Config; quiet: bool): int =
       initOrderedTable[string, DevelStateEntry]()
     else:
       let loaded = loadDevelState(config.develDbFile)
-      if loaded[1].isSome:
+      if not quiet and loaded[1].isSome:
         printWarning(config.color, tr"$#: could not read devel state file ($#), ignoring saved state" %
           [config.develDbFile, loaded[1].unsafeGet])
       loaded[0]
@@ -2029,11 +2036,11 @@ proc printDevelQueryUpgrades*(config: Config; quiet: bool): int =
       if record.sources.len > 0 and not config.develIgnored(info.name) and
           not checkedBases.containsOrIncl(info.base):
         candidates.add info
-  let observedGitRefs = checkDevelGitRefs(config, develDb, candidates, true)
+  let observedGitRefs = checkDevelGitRefs(config, develDb, candidates, true, quiet)
   let rpcTable = rpcInfos.mapIt((it.name, it)).toTable
   var rows: seq[tuple[name, version, token: string]]
   for inst in installed:
-    if not inst.foreign or config.ignored(inst.name, inst.groups):
+    if not inst.foreign:
       continue
     for info in rpcTable.opt(inst.name):
       if not (config.hasDevelSuffix(info.name) or info.base in develDb) or
@@ -2042,9 +2049,15 @@ proc printDevelQueryUpgrades*(config: Config; quiet: bool): int =
 
       let (needed, displayToken) = develUpgradeNeeded(info, inst, true,
         develDb, observedGitRefs.getOrDefault(info.base))
-      if needed:
-        for token in displayToken:
-          rows.add (name: info.name, version: inst.version, token: token)
+      if not needed:
+        continue
+      if config.ignored(inst.name, inst.groups):
+        if not quiet and config.checkIgnored:
+          printWarning(config.color,
+            tra("%s: ignoring development package rebuild\n") % [info.name])
+        continue
+      for token in displayToken:
+        rows.add (name: info.name, version: inst.version, token: token)
 
   if rows.len > 0:
     if not quiet:
@@ -2116,7 +2129,13 @@ proc resolveBuildTargets(config: Config; syncTargets: seq[SyncPackageTarget];
       (@[], errors)
 
   let develLive = develLiveBases(installed, upgradeRpcInfos)
-  let pruneDevel = upgradeRpcErrors.len == 0
+  let ignoredForeign = installed.anyIt(it.foreign and
+    config.ignored(it.name, it.groups))
+  # Without a complete authoritative AUR lookup there is no pkgbase for split
+  # packages whose installed members lack %BASE%; pruning then deletes live state.
+  let pruneDevel = checkAur and upgradeRpcErrors.len == 0 and
+    upgradeRpcInfos.len == checkAurUpgradeNames.len and
+    (config.checkIgnored or not ignoredForeign)
 
   let (develDb, develStateReadable) = block:
     # A record for a package that is gone must not decide anything. The keys are

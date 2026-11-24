@@ -35,6 +35,8 @@ Options
 	workspace in +TmpDir+. Supports the same variable expansion as
 	+TmpDir+ (+\fB${USER}\fP+, +\fB${HOME}\fP+, +\fB${UID}\fP+,
 	+\fB$$\fP+). Defaults to +TmpDir+ when unset or empty.
+	Variables expand once; write +\fB$$\fP+ for a literal dollar sign, so
+	+\fB$${USER}\fP+ stays the text +${USER}+.
 
 *AurRepo =* name::
 	Set the fake AUR repository name. This name should not conflict with
@@ -58,13 +60,14 @@ Options
 *IgnoreDevel*::
 	Package names or glob patterns whose devel-specific offers are ignored.
 	An ignored package is still considered by ordinary version comparison.
-	Names are separated by whitespace or commas; `*` and `?` are wildcards.
+	Names are separated by whitespace or commas. A pattern matches the whole
+	name: `?` matches one character and `*` any run, including none.
 
 *IgnoreDevelSource*::
 	Git source URL glob patterns that are excluded from ref checks and from
 	saved devel state. Useful for unversioned secondary sources that would
 	otherwise make a package look stale. Separate patterns by whitespace or
-	commas.
+	commas, with the same whole-value wildcard rules as +IgnoreDevel+.
 
 *DevelSuffixes*::
 	Suffixes that mark a package as development for AUR info-time checks and
