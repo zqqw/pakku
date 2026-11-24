@@ -66,6 +66,15 @@ Options
 	otherwise make a package look stale. Separate patterns by whitespace or
 	commas.
 
+*DevelSuffixes*::
+	Suffixes that mark a package as development for AUR info-time checks and
+	for suppressing misleading version warnings. Defaults to +git+, +svn+,
+	+hg+, +bzr+, +cvs+, +darcs+, +always+, +fossil+, +nightly+ and
+	+insiders-bin+; +always+ also matches the +-always-+ infix. Separate
+	entries by whitespace or commas, with or without a leading dash. Only
+	git sources are followed for upstream ref changes; other suffixes affect
+	classification, not tracking.
+
 *CheckIgnored*::
 	Check ignored packages for updates in AUR. Pakku will be able to warn
 	about ignored package upgrade.

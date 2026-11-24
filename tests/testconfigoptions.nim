@@ -97,6 +97,16 @@ suite "devel ignore options":
     check cfg.develSourceIgnored("https://bad.example/x.git")
     check not cfg.develSourceIgnored("https://good.example/x.git")
 
+  test "devel suffixes have broad defaults and can be overridden":
+    let cfg = configOf("[options]\n")
+    check "cvs" in cfg.develSuffixes
+    check "nightly" in cfg.develSuffixes
+    check cfg.hasDevelSuffix("foo-nightly")
+    let custom = configOf("[options]\nDevelSuffixes = git -nightly\n")
+    check custom.develSuffixes == @["git", "nightly"]
+    check custom.hasDevelSuffix("foo-nightly")
+    check not custom.hasDevelSuffix("foo-cvs")
+
 suite "diagnostics":
   test "an unknown key names the option and the file":
     let message = errorOf("[options]\nFrobnicate = 1\n")

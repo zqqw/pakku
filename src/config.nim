@@ -34,6 +34,7 @@ type
     checkDevel = "CheckDevel",
     ignoreDevel = "IgnoreDevel",
     ignoreDevelSource = "IgnoreDevelSource",
+    develSuffixes = "DevelSuffixes",
 
     checkIgnored = "CheckIgnored",
     ignoreArch = "IgnoreArch",
@@ -97,6 +98,7 @@ type
     checkDevel*: bool
     ignoreDevel*: seq[string]
     ignoreDevelSource*: seq[string]
+    develSuffixes*: seq[string]
     checkIgnored*: bool
     ignoreArch*: bool
     printAurNotFound*: bool
@@ -282,6 +284,26 @@ func matchesPattern(pattern, value: string): bool =
     inc p
   p == pattern.len
 
+const defaultDevelSuffixes = ["git", "svn", "hg", "bzr", "cvs", "darcs",
+  "always", "fossil", "nightly", "insiders-bin"]
+
+func develSuffixList(options: PakkuOptions): seq[string] =
+  for token in optionList(options, OptionKey.develSuffixes):
+    let suffix = if token.startsWith("-"): token[1 .. ^1] else: token
+    if suffix.len > 0 and suffix notin result:
+      result.add suffix
+  if result.len == 0:
+    for suffix in defaultDevelSuffixes:
+      result.add suffix
+
+proc hasDevelSuffix*(config: Config; name: string): bool =
+  for suffix in config.develSuffixes:
+    if name.endsWith("-" & suffix):
+      return true
+  if "always" in config.develSuffixes and name.contains("-always-"):
+    return true
+  false
+
 proc develIgnored*(config: Config; name: string): bool =
   for pattern in config.ignoreDevel:
     if matchesPattern(pattern, name):
@@ -399,6 +421,7 @@ proc obtainConfig*(config: PacmanConfig;
     checkDevel: OptionKey.checkDevel in options,
     ignoreDevel: optionList(options, OptionKey.ignoreDevel),
     ignoreDevelSource: optionList(options, OptionKey.ignoreDevelSource),
+    develSuffixes: develSuffixList(options),
     checkIgnored: OptionKey.checkIgnored in options,
     ignoreArch: OptionKey.ignoreArch in options,
     printAurNotFound: OptionKey.printAurNotFound in options,

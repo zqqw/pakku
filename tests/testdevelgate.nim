@@ -38,13 +38,18 @@ suite "devel packaging gate":
     check not aurInfoChanged(some(100'i64), 0, 150)
 
 suite "devel candidates":
-  test "vcs suffixes are candidates":
-    for name in ["rmlint-git", "foo-svn", "foo-hg", "foo-bzr"]:
-      check name.hasDevelSuffix
+  var cfg = default(Config)
+  cfg.develSuffixes = @["git", "svn", "hg", "bzr", "cvs", "darcs",
+    "always", "fossil", "nightly", "insiders-bin"]
+
+  test "configured vcs suffixes are candidates":
+    for name in ["rmlint-git", "foo-svn", "foo-hg", "foo-bzr", "foo-cvs",
+        "foo-nightly", "foo-insiders-bin", "foo-always-x"]:
+      check cfg.hasDevelSuffix(name)
 
   test "other names keep the version comparison":
     for name in ["rmlint", "git", "foo-git-bin", "foo-github", "btrfs-progs"]:
-      check not name.hasDevelSuffix
+      check not cfg.hasDevelSuffix(name)
 
 suite "devel upgrade decision":
   let source = DevelGitSource(url: "https://example.org/a.git",

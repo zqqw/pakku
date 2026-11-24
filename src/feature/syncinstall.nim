@@ -211,10 +211,6 @@ template withCloneProgress(config: Config; count: int; flexible, printMode: bool
   finally:
     cloneTerminate()
 
-func hasDevelSuffix(name: string): bool =
-  let index = name.rfind('-')
-  index >= 0 and (let suffix = name[index + 1 .. ^1];
-    suffix == "bzr" or suffix == "git" or suffix == "hg" or suffix == "svn")
 
 func isGitName(name: string): bool =
   ## The only development suffix whose upstream can be followed: the others
@@ -1612,7 +1608,7 @@ proc printAllWarnings(config: Config; installed: seq[Installed];
           # moved, so the downgrade wording would be a guess.
           if vercmp(cstring(newVer), cstring(instVer)) < 0 and
               (config.develIgnored(pkgInfo.rpc.name) or
-                not (pkgInfo.rpc.name.hasDevelSuffix or pkgInfo.rpc.base in develDb)):
+                not (config.hasDevelSuffix(pkgInfo.rpc.name) or pkgInfo.rpc.base in develDb)):
             printWarning(config.color,
               tra("%s: downgrading from version %s to version %s\n") %
               [pkgInfo.rpc.name, instVer, newVer])
@@ -1839,7 +1835,7 @@ proc obtainAurPackageInfos(config: Config; rpcInfos: seq[RpcPackageInfo];
     if upgradeCount > 0:
       for i in rpcInfos:
         if not targetRefs.anyIt(it.isProvidedBy(i.toPackageReference, true)) and
-            (i.name.hasDevelSuffix or i.base in develDb) and
+            (config.hasDevelSuffix(i.name) or i.base in develDb) and
             not config.develIgnored(i.name):
           candidates.add i
     checkDevelGitRefs(config, develDb, candidates, checkGitRefs)
@@ -1855,7 +1851,7 @@ proc obtainAurPackageInfos(config: Config; rpcInfos: seq[RpcPackageInfo];
           continue
         let checkRes = installed.checkNeeded(i.name, i.version, upgradeCount >= 2)
         let (newNeeded, localIsNewer, label) =
-          if (i.name.hasDevelSuffix or i.base in develDb) and
+          if (config.hasDevelSuffix(i.name) or i.base in develDb) and
               not config.develIgnored(i.name):
             # Development packages are never judged by version.
             let (needed, develLabel) = develUpgradeNeeded(i, installed[i.name],
@@ -2038,7 +2034,7 @@ proc printDevelQueryUpgrades*(config: Config; quiet: bool): int =
     if not inst.foreign or config.ignored(inst.name, inst.groups):
       continue
     for info in rpcTable.opt(inst.name):
-      if not (info.name.hasDevelSuffix or info.base in develDb) or
+      if not (config.hasDevelSuffix(info.name) or info.base in develDb) or
           config.develIgnored(info.name):
         continue
 
