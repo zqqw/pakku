@@ -167,12 +167,12 @@ suite "directory patterns":
 
   test "repeated slashes collapse in sysroot paths":
     let pc = PacmanConfig(common: CommonConfig(dbs: @["core"], arch: "x86_64"),
-      sysrootOption: some("/sys//root"), colorMode: ColorMode.colorNever)
+      sysroot: "/sys//root", colorMode: ColorMode.colorNever)
     check obtainConfig(pc, fixture("[options]\n")).root == "/sys/root/"
 
   test "sysroot joins resolve dot components and keep trailing separators":
     let pc = PacmanConfig(common: CommonConfig(dbs: @["core"], arch: "x86_64"),
-      sysrootOption: some("/sys//root"),
+      sysroot: "/sys//root",
       dbRelOption: some("/var/../lib/pacman/"),
       colorMode: ColorMode.colorNever)
     check obtainConfig(pc, fixture("[options]\n")).db == "/sys/root/lib/pacman/"

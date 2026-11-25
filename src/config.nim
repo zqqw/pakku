@@ -82,7 +82,7 @@ type
 
   PacmanConfig* = object
     common*: CommonConfig
-    sysrootOption*: Option[string]
+    sysroot*: string
     rootRelOption*: Option[string]
     dbRelOption*: Option[string]
     cacheRelOption*: Option[string]
@@ -349,9 +349,6 @@ proc pacmanDbRel*(config: PacmanConfig): string =
 proc pacmanCacheRel*(config: PacmanConfig): string =
   config.cacheRelOption.get(LocalStateDir / "cache/pacman/pkg")
 
-proc extendRel*(pathRel: string, sysroot: Option[string]): string =
-  sysroot.map(s => s / pathRel).get(pathRel)
-
 proc obtainConfig*(config: PacmanConfig;
     configFile = SysConfDir / "pakku.conf"): Config =
   ## Builds the pakku runtime configuration by layering the pacman config with
@@ -363,9 +360,9 @@ proc obtainConfig*(config: PacmanConfig;
       .map(t => t[]).get(initTable[string, string]())
 
   let
-    root = config.pacmanRootRel.extendRel(config.sysrootOption)
-    db = config.pacmanDbRel.extendRel(config.sysrootOption)
-    cache = config.pacmanCacheRel.extendRel(config.sysrootOption)
+    root = config.sysroot / config.pacmanRootRel
+    db = config.sysroot / config.pacmanDbRel
+    cache = config.sysroot / config.pacmanCacheRel
     color = config.colorMode.get
 
   let options = parseOptions(rawOptions, configFile)
@@ -405,13 +402,8 @@ proc obtainConfig*(config: PacmanConfig;
     raise commandError(trp("could not register '%s' database (%s)\n") %
       [aurRepo, tra"wrong or NULL argument passed"], colorNeeded = some(color))
 
-  let common = block:
-    var c = config.common
-    c.defaultRoot = c.defaultRoot and config.sysrootOption.isNone
-    c
-
   Config(
-    common: common,
+    common: config.common,
     root: root,
     db: db,
     cache: cache,
