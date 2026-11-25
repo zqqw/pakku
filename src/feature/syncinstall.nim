@@ -2007,8 +2007,26 @@ proc obtainInstalledWithAur(config: Config): (seq[Installed], seq[string]) =
           res.add inst.name
       res
     (installed, checkAurUpgradeNames)
+
+proc warnDevelStateLoad(config: Config; path: string; loaded: DevelStateLoad;
+    quiet = false) =
+  ## Warns once about a state file that was recovered or left unused.
+  if loaded.status == develStateOk or quiet:
+    return
+  case loaded.status
+  of develStateEmpty:
+    printWarning(config.color, tr"$#: devel state file is empty; recreated it" %
+      [path])
+  of develStateMalformed:
+    assert loaded.reason.len > 0
+    printWarning(config.color, tr"$#: could not read devel state file ($#), ignoring saved state" %
+      [path, loaded.reason])
+  of develStateOk:
+    discard
+
 proc printDevelQueryUpgrades*(config: Config; quiet: bool): int =
-  ## Print devel offers for `-Qu` without changing state or building packages.
+  ## Print devel offers for `-Qu` without changing recorded state; an empty
+  ## state file is repaired on load.
   let (installed, checkNames) = obtainInstalledWithAur(config)
   if checkNames.len == 0:
     return 0
@@ -2024,10 +2042,8 @@ proc printDevelQueryUpgrades*(config: Config; quiet: bool): int =
       initOrderedTable[string, DevelStateEntry]()
     else:
       let loaded = loadDevelState(config.develDbFile)
-      if not quiet and loaded[1].isSome:
-        printWarning(config.color, tr"$#: could not read devel state file ($#), ignoring saved state" %
-          [config.develDbFile, loaded[1].unsafeGet])
-      loaded[0]
+      warnDevelStateLoad(config, config.develDbFile, loaded, quiet)
+      loaded.db
 
   var candidates: seq[RpcPackageInfo]
   var checkedBases = initHashSet[string]()
@@ -2152,12 +2168,11 @@ proc resolveBuildTargets(config: Config; syncTargets: seq[SyncPackageTarget];
           [config.develDbFile])
       readable = false
     else:
-      let (loaded, error) = loadDevelState(config.develDbFile)
-      if error.isSome:
-        printWarning(config.color, tr"$#: could not read devel state file ($#), ignoring saved state" %
-          [config.develDbFile, error.unsafeGet])
+      let loaded = loadDevelState(config.develDbFile)
+      warnDevelStateLoad(config, config.develDbFile, loaded)
+      if loaded.status == develStateMalformed:
         readable = false
-      db = loaded
+      db = loaded.db
       # An incomplete RPC result is not evidence that a base was removed.
       if readable and pruneDevel and develLive.len > 0:
         db.dropUnlistedDevelEntries(develLive)

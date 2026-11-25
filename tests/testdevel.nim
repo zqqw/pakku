@@ -200,7 +200,7 @@ suite "ledger":
     let stamp = 2_147_483_648'i64
     discard db.updateDevelStateEntry(base, stamp, observedGitRefs)
     discard saveDevelState(path, db)
-    let loaded = loadDevelState(path)[0]
+    let loaded = loadDevelState(path).db
 
     check loaded == db
     check loaded[base].lastModified == stamp
@@ -208,26 +208,43 @@ suite "ledger":
       commit: "aaaaaaaa")]
 
   test "an absent or broken file is an empty ledger":
-    check loadDevelState(path)[0].len == 0
-    check loadDevelState(path)[1].isNone
+    check loadDevelState(path).db.len == 0
+    check loadDevelState(path).status == develStateOk
     writeFile(path, "{not json")
     let broken = loadDevelState(path)
-    check broken[0].len == 0
-    check broken[1].isSome
+    case broken.status
+    of develStateMalformed:
+      check broken.db.len == 0
+      check broken.reason.len > 0
+    of develStateOk, develStateEmpty:
+      check broken.status == develStateMalformed
+    check readFile(path) == "{not json"
     writeFile(path, """{"schema": 99, "packages": {"x": {}}}""")
     let future = loadDevelState(path)
-    check future[0].len == 0
-    check future[1].isSome
+    case future.status
+    of develStateMalformed:
+      check future.db.len == 0
+    of develStateOk, develStateEmpty:
+      check future.status == develStateMalformed
     writeFile(path, """{"schema": 1, "packages": {"x": {"lastModified": 1}}}""")
-    check loadDevelState(path)[0].len == 0
+    check loadDevelState(path).db.len == 0
+
+  test "an empty state file is repaired instead of abandoned":
+    for content in ["", "\n  \t"]:
+      writeFile(path, content)
+      let loaded = loadDevelState(path)
+      check loaded.db.len == 0
+      check loaded.status == develStateEmpty
+      check readFile(path).len > 0
+      check loadDevelState(path).status == develStateOk
 
   test "decoded refs are validated before they can reach git":
     writeFile(path, """{"schema":1,"packages":{"x":{"lastModified":1,"sources":[{"url":"https://example.org/a.git","branch":"*","commit":"aaaaaaaa"}]}}}""")
-    check loadDevelState(path)[0]["x"].sources.len == 0
+    check loadDevelState(path).db["x"].sources.len == 0
     writeFile(path, """{"schema":1,"packages":{"x":{"lastModified":1,"sources":[{"url":"https://example.org/a.git","commit":"abc"}]}}}""")
-    check loadDevelState(path)[0]["x"].sources.len == 0
+    check loadDevelState(path).db["x"].sources.len == 0
     writeFile(path, """{"schema":1,"packages":{"x":{"lastModified":"1","sources":[]}}}""")
-    check not loadDevelState(path)[0].hasKey("x")
+    check not loadDevelState(path).db.hasKey("x")
 
   test "an unreadable ref keeps the revision already recorded":
     var db = initOrderedTable[string, DevelStateEntry]()
@@ -271,7 +288,7 @@ suite "ledger":
     discard db.updateDevelStateEntry(base, 100, [])
     check db[base].sources.len == 0
     discard saveDevelState(path, db)
-    check loadDevelState(path)[0][base].sources.len == 0
+    check loadDevelState(path).db[base].sources.len == 0
 
   test "prune drops uninstalled bases only":
     var db = initOrderedTable[string, DevelStateEntry]()

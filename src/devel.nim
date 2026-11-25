@@ -36,6 +36,23 @@ type
 
   DevelStateData* = OrderedTable[string, DevelStateEntry] ## pkgbase -> record
 
+  DevelStateStatus* = enum
+    ## Result of loading devel state. An empty file is recoverable and is
+    ## rewritten on load; a malformed one is left untouched.
+    develStateOk        ## absent or valid state
+    develStateEmpty     ## zero-length or whitespace-only file, repaired
+    develStateMalformed ## unreadable or invalid file, kept as-is
+
+  DevelStateLoad* = object
+    ## Always carries the decoded ledger. Only a malformed file carries a reason;
+    ## an empty file needs no payload once its status is known.
+    db*: DevelStateData
+    case status*: DevelStateStatus
+    of develStateOk, develStateEmpty:
+      discard
+    of develStateMalformed:
+      reason*: string
+
   GitRefAnswer* = object
     ## What a lookup answered for one source now.
     source*: DevelGitSource
@@ -463,17 +480,35 @@ func fromJson(node: JsonNode): (DevelStateData, Option[string]) =
       parsed.sources.add SavedGitRef(source: source, commit: commit)
     result[0][base] = parsed
 
-proc loadDevelState*(path: string): (DevelStateData, Option[string]) =
-  ## An absent file is normal empty devel state. An existing file that cannot be
-  ## read or decoded is also empty, but carries the reason so callers can warn
-  ## and never rewrite it: silently replacing state hides a broken state file.
+proc saveDevelState*(path: string; db: DevelStateData): Option[string]
+
+proc loadDevelState*(path: string): DevelStateLoad =
+  ## An absent file is normal empty state. An empty file warns but is repaired
+  ## on load, so the next build records into it. Only a file that cannot be read,
+  ## decoded or repaired is abandoned with its reason.
   var db: DevelStateData
   if not fileExists(path):
-    return (db, none(string))
+    return DevelStateLoad(db: db, status: develStateOk)
+  let content = block:
+    try:
+      readFile(path)
+    except CatchableError:
+      return DevelStateLoad(db: db, status: develStateMalformed,
+        reason: getCurrentExceptionMsg())
+  if content.strip.len == 0:
+    for failure in saveDevelState(path, db):
+      return DevelStateLoad(db: db, status: develStateMalformed,
+        reason: tr"devel state file is empty; could not recreate it: $#" % [failure])
+    return DevelStateLoad(db: db, status: develStateEmpty)
   try:
-    fromJson(parseFile(path))
+    let (decoded, problem) = fromJson(parseJson(content))
+    for reason in problem:
+      return DevelStateLoad(db: decoded, status: develStateMalformed,
+        reason: reason)
+    DevelStateLoad(db: decoded, status: develStateOk)
   except CatchableError:
-    (db, some(getCurrentExceptionMsg()))
+    DevelStateLoad(db: db, status: develStateMalformed,
+      reason: getCurrentExceptionMsg())
 
 proc dropUnlistedDevelEntries*(db: var DevelStateData; live: HashSet[string]) =
   ## Drops records for pkgbases the AUR no longer lists. The key has to come

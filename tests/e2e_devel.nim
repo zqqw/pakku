@@ -74,7 +74,7 @@ for pkgInfo in group:
   install.add InstallTarget(name: pkgInfo.rpc.name,
     file: pkgInfo.rpc.name & ".pkg.tar.zst")
 updateDevelStateFromBuild(cfg, @[group], InstallArtifacts(install: install), probe, runState())
-let db = loadDevelState(cfg.develDbFile)[0]
+let db = loadDevelState(cfg.develDbFile).db
 echo "ledger: ", db
 doAssert probe.observedGitRefs.hasKey(aurInfo.base), "no observations for the base"
 doAssert db.hasKey(aurInfo.base), "the base was not recorded"

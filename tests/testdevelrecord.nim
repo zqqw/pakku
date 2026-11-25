@@ -85,7 +85,7 @@ suite "recording a built devel base":
     let config = fixtureConfig(root)
     updateDevelStateFromBuild(config, @[@[fixturePackage()]], installOf("foo-git"),
       probe(observedGitRefs), state())
-    let db = loadDevelState(config.develDbFile)[0]
+    let db = loadDevelState(config.develDbFile).db
 
     check db.len == 1
     check db["foo-git"].lastModified == 100
@@ -96,13 +96,13 @@ suite "recording a built devel base":
     let config = fixtureConfig(root)
     updateDevelStateFromBuild(config, @[@[fixturePackage()]], installOf(), probe(observedGitRefs),
       state())
-    check loadDevelState(config.develDbFile)[0].len == 0
+    check loadDevelState(config.develDbFile).db.len == 0
 
   test "a partially installed split base is not recorded":
     let config = fixtureConfig(root)
     let split = @[fixturePackage(), fixturePackage(name = "foo-tools-git")]
     updateDevelStateFromBuild(config, @[split], installOf("foo-git"), probe(observedGitRefs), state())
-    check loadDevelState(config.develDbFile)[0].len == 0
+    check loadDevelState(config.develDbFile).db.len == 0
 
   test "an installed sibling left behind prevents the stamp":
     ## `IgnorePkg = foo-tools-git`, or the user deselected it: the base's
@@ -111,14 +111,14 @@ suite "recording a built devel base":
     let installedBaseMembers = {"foo-git": @["foo-git", "foo-tools-git"]}.toTable
     updateDevelStateFromBuild(config, @[@[fixturePackage()]], installOf("foo-git"),
       probe(observedGitRefs), state(installedBaseMembers = installedBaseMembers))
-    check loadDevelState(config.develDbFile)[0].len == 0
+    check loadDevelState(config.develDbFile).db.len == 0
 
   test "a base without a probe is left alone":
     let config = fixtureConfig(root)
     updateDevelStateFromBuild(config, @[@[fixturePackage(base = "other-git")]],
       installOf("foo-git"), probe(initTable[string, seq[GitRefAnswer]]()),
       state())
-    check loadDevelState(config.develDbFile)[0].len == 0
+    check loadDevelState(config.develDbFile).db.len == 0
 
   test "a missing RPC stamp prevents a record":
     let config = fixtureConfig(root)
@@ -126,7 +126,7 @@ suite "recording a built devel base":
     pkgInfo.rpc.lastModified = none(int64)
     updateDevelStateFromBuild(config, @[@[pkgInfo]], installOf("foo-git"), probe(observedGitRefs),
       state())
-    check loadDevelState(config.develDbFile)[0].len == 0
+    check loadDevelState(config.develDbFile).db.len == 0
 
   test "recording replaces the previous revision":
     let config = fixtureConfig(root)
@@ -138,7 +138,7 @@ suite "recording a built devel base":
     updateDevelStateFromBuild(config, @[@[fixturePackage(lastModified = 200)]],
       installOf("foo-git"), probe(moved), shared)
 
-    let db = loadDevelState(config.develDbFile)[0]
+    let db = loadDevelState(config.develDbFile).db
 
     check db["foo-git"].lastModified == 200
     check db["foo-git"].sources[0].commit == "9999999999"
@@ -157,7 +157,7 @@ suite "recording a built devel base":
       installOf("foo-git"), probe(initTable[string, seq[GitRefAnswer]](), noPkgverBases),
       shared)
 
-    let db = loadDevelState(config.develDbFile)[0]
+    let db = loadDevelState(config.develDbFile).db
 
     check db["foo-git"].lastModified == 200
     check db["foo-git"].sources.len == 0
@@ -171,7 +171,7 @@ suite "recording a built devel base":
       commit: none(string))]}.toTable
     updateDevelStateFromBuild(config, @[@[fixturePackage(lastModified = 200)]],
       installOf("foo-git"), probe(unreadable), state())
-    let db = loadDevelState(config.develDbFile)[0]
+    let db = loadDevelState(config.develDbFile).db
 
     check db["foo-git"].lastModified == 200
     check db["foo-git"].sources.len == 0
@@ -186,7 +186,7 @@ suite "recording a built devel base":
     aurListedBases.incl "foo-git"
     updateDevelStateFromBuild(config, @[@[fixturePackage()]], installOf("foo-git"),
       probe(observedGitRefs), state(data = seeded, aurListedBases = aurListedBases))
-    let db = loadDevelState(config.develDbFile)[0]
+    let db = loadDevelState(config.develDbFile).db
 
     check db.len == 1 and "foo-git" in db
 
@@ -248,7 +248,7 @@ suite "probing a base before the build":
     check probed.observedGitRefs["foo-git"].len == 0
     updateDevelStateFromBuild(config, @[@[fixturePackage()]], installOf("foo-git"), probed,
       state())
-    let db = loadDevelState(config.develDbFile)[0]
+    let db = loadDevelState(config.develDbFile).db
     check db["foo-git"].lastModified == 100
     check db["foo-git"].sources.len == 0
 
@@ -262,7 +262,7 @@ suite "probing a base before the build":
     check probed.observedGitRefs["foo-git"].len == 0
     updateDevelStateFromBuild(config, @[@[fixturePackage(lastModified = 200)]],
       installOf("foo-git"), probed, state())
-    let db = loadDevelState(config.develDbFile)[0]
+    let db = loadDevelState(config.develDbFile).db
     check db["foo-git"].lastModified == 200
     check db["foo-git"].sources.len == 0
 
@@ -346,4 +346,4 @@ suite "probing a base before the build":
     updateDevelStateFromBuild(config, @[], InstallArtifacts(install: @[]),
       probe(initTable[string, seq[GitRefAnswer]]()),
       state(data = seeded, aurListedBases = live))
-    check loadDevelState(config.develDbFile)[0].hasKey("ignored-git")
+    check loadDevelState(config.develDbFile).db.hasKey("ignored-git")
