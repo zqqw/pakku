@@ -1,7 +1,14 @@
 import
-  std/[options, posix, sets, strutils, sugar, tables],
+  std/[options, posix, sequtils, sets, strutils, sugar, tables],
   utils
+from std/os import `/`
 when not declared(system.stdout): import std/syncio
+
+const
+  defaultUserCacheDir = "${HOME}/.cache/pakku"
+  defaultTmpDir = "/tmp/pakku-${USER}"
+  defaultAurRepo = "aur"
+  develStateFileName = "devel.json"
 
 type
   ColorMode* {.pure.} = enum
@@ -31,6 +38,11 @@ type
     cleanupAfterInstall = "CleanupAfterInstall",
     preserveBuilt = "PreserveBuilt",
     aurComments = "AurComments",
+    checkDevel = "CheckDevel",
+    ignoreDevel = "IgnoreDevel",
+    ignoreDevelSource = "IgnoreDevelSource",
+    develSuffixes = "DevelSuffixes",
+
     checkIgnored = "CheckIgnored",
     ignoreArch = "IgnoreArch",
     printAurNotFound = "PrintAurNotFound",
@@ -41,7 +53,7 @@ type
     keepBuiltPackagesOnFailure = "KeepBuiltPackagesOnFailure"
 
 const flagKeys: set[OptionKey] = {
-  OptionKey.aurComments, checkIgnored, ignoreArch, printAurNotFound,
+  OptionKey.aurComments, checkDevel, checkIgnored, ignoreArch, printAurNotFound,
   printLocalIsNewer, sudoExec, viewNoDefault, keepBuildDirOnFailure,
   keepBuiltPackagesOnFailure}
 
@@ -70,7 +82,7 @@ type
 
   PacmanConfig* = object
     common*: CommonConfig
-    sysrootOption*: Option[string]
+    sysroot*: string
     rootRelOption*: Option[string]
     dbRelOption*: Option[string]
     cacheRelOption*: Option[string]
@@ -88,8 +100,12 @@ type
     tmpRootCurrent*: string
     packageOutputDir*: string
     color*: bool
-    aurRepo*: string = "aur"
+    aurRepo*: string = defaultAurRepo
     aurComments*: bool
+    checkDevel*: bool
+    ignoreDevel*: seq[string]
+    ignoreDevelSource*: seq[string]
+    develSuffixes*: seq[string]
     checkIgnored*: bool
     ignoreArch*: bool
     printAurNotFound*: bool
@@ -241,8 +257,77 @@ func get[T: enum](options: PakkuOptions; key: OptionKey; default: T): T =
   ## lands here because `parseOptions` reports it instead of storing it.
   enumFromString[T](options.values[key].get("")).get(default)
 
-proc ignored*(config: Config, name: string, groups: openArray[string]): bool =
-  name in config.common.ignorePkgs or (config.common.ignoreGroups * groups.toHashSet).len > 0
+func develDbFile*(config: Config): string =
+  ## The saved devel state: which upstream refs each development pkgbase was built
+  ## from. It is a memo, not a source of truth -- losing it degrades precision
+  ## (entries re-form on the next build), so it lives with pakku's other
+  ## per-user data rather than in a new state directory.
+  config.userCacheInitial / develStateFileName
+
+func optionList(options: PakkuOptions; key: OptionKey): seq[string] =
+  options[key].get("").split(Whitespace + {','}).filterIt(it.len > 0)
+
+func matchesPattern(pattern, value: openArray[char]): bool =
+  ## Glob matcher for ignore lists: `?` matches one character and `*` any run,
+  ## including none. The most recent `*` is the backtrack point, so a mismatch
+  ## resumes one character further in the value instead of restarting the
+  ## pattern; worst case is O(pattern.len * value.len), with no allocations.
+  var
+    p = 0
+    v = 0
+    star = -1
+    retry = 0
+  while v < value.len:
+    if p < pattern.len and (pattern[p] == '?' or pattern[p] == value[v]):
+      inc p
+      inc v
+    elif p < pattern.len and pattern[p] == '*':
+      star = p
+      retry = v
+      inc p
+    elif star >= 0:
+      p = star + 1
+      inc retry
+      v = retry
+    else:
+      return false
+  while p < pattern.len and pattern[p] == '*':
+    inc p
+  p == pattern.len
+
+func matchesAny(patterns: openArray[string]; value: string): bool =
+  patterns.anyIt(matchesPattern(it, value))
+
+const defaultDevelSuffixes = ["git", "svn", "hg", "bzr", "cvs", "darcs",
+  "always", "fossil", "nightly", "insiders-bin"]
+
+func develSuffixList(options: PakkuOptions): seq[string] =
+  for token in optionList(options, OptionKey.develSuffixes):
+    let suffix = if token.startsWith("-"): token[1 .. ^1] else: token
+    if suffix.len > 0 and suffix notin result:
+      result.add suffix
+  if result.len == 0:
+    for suffix in defaultDevelSuffixes:
+      result.add suffix
+
+func hasDevelSuffix*(config: Config; name: string): bool =
+  for suffix in config.develSuffixes:
+    if name.len > suffix.len and name[name.len - suffix.len - 1] == '-' and
+        name.endsWith(suffix):
+      return true
+  if "always" in config.develSuffixes and name.contains("-always-"):
+    return true
+  false
+
+func develIgnored*(config: Config; name: string): bool =
+  matchesAny(config.ignoreDevel, name)
+
+func develSourceIgnored*(config: Config; url: string): bool =
+  matchesAny(config.ignoreDevelSource, url)
+
+func ignored*(config: Config; name: string; groups: openArray[string]): bool =
+  name in config.common.ignorePkgs or
+    groups.anyIt(it in config.common.ignoreGroups)
 
 proc get*(colorMode: ColorMode): bool =
   case colorMode:
@@ -259,22 +344,13 @@ proc pacmanDbRel*(config: PacmanConfig): string =
   else:
     let root = config.pacmanRootRel
     let workRoot = if root == "/": "" else: root
-    workRoot & LocalStateDir & "/lib/pacman/"
+    workRoot / LocalStateDir / "lib/pacman/"
 
 proc pacmanCacheRel*(config: PacmanConfig): string =
-  config.cacheRelOption.get(LocalStateDir & "/cache/pacman/pkg")
-
-proc simplifyConfigPath(path: string): string =
-  if path.find("//") >= 0:
-    simplifyConfigPath(path.replace("//", "/"))
-  else:
-    path
-
-proc extendRel*(pathRel: string, sysroot: Option[string]): string =
-  sysroot.map(s => (s & "/" & pathRel).simplifyConfigPath).get(pathRel)
+  config.cacheRelOption.get(LocalStateDir / "cache/pacman/pkg")
 
 proc obtainConfig*(config: PacmanConfig;
-    configFile = SysConfDir & "/pakku.conf"): Config =
+    configFile = SysConfDir / "pakku.conf"): Config =
   ## Builds the pakku runtime configuration by layering the pacman config with
   ## user-specified options from the pakku.conf options section.
   ## `configFile` used by tests
@@ -284,29 +360,31 @@ proc obtainConfig*(config: PacmanConfig;
       .map(t => t[]).get(initTable[string, string]())
 
   let
-    root = config.pacmanRootRel.extendRel(config.sysrootOption)
-    db = config.pacmanDbRel.extendRel(config.sysrootOption)
-    cache = config.pacmanCacheRel.extendRel(config.sysrootOption)
+    root = config.sysroot / config.pacmanRootRel
+    db = config.sysroot / config.pacmanDbRel
+    cache = config.sysroot / config.pacmanCacheRel
     color = config.colorMode.get
 
   let options = parseOptions(rawOptions, configFile)
   if options.errors.len > 0:
     raise commandError(options.errors.join, colorNeeded = some(color))
 
-  proc handleDirPattern(dirPattern: string, user: User): string =
-    dirPattern
-      .replace("${UID}", $user.uid)
-      .replace("${USER}", user.name)
-      .replace("${HOME}", user.home)
-      .replace("$$", "$")
+  proc handleDirPattern(dirPattern: string; user: User): string =
+    ## Expands user variables in one pass. Because replacements never revisit
+    ## inserted text, `$$` stays a literal `$` even before another variable.
+    dirPattern.multiReplace(
+      ("${UID}", $user.uid),
+      ("${USER}", user.name),
+      ("${HOME}", user.home),
+      ("$$", "$"))
 
   proc obtainUserCacheDir(user: User): string =
     options[OptionKey.userCacheDir]
-      .get("${HOME}/.cache/pakku").handleDirPattern(user)
+      .get(defaultUserCacheDir).handleDirPattern(user)
 
   proc obtainTmpDir(user: User): string =
     options[OptionKey.tmpDir]
-      .get("/tmp/pakku-${USER}").handleDirPattern(user)
+      .get(defaultTmpDir).handleDirPattern(user)
 
   let
     initialOrCurrentUser = initialUser.get(currentUser)
@@ -314,7 +392,7 @@ proc obtainConfig*(config: PacmanConfig;
     userCacheCurrent = obtainUserCacheDir(currentUser)
     tmpRootInitial = obtainTmpDir(initialOrCurrentUser)
     tmpRootCurrent = obtainTmpDir(currentUser)
-    aurRepo = options[OptionKey.aurRepo].get("aur")
+    aurRepo = options[OptionKey.aurRepo].get(defaultAurRepo)
 
   if config.common.dbs.find(aurRepo) >= 0:
     raise commandError(tr"repo '$#' can not be used as fake AUR repository" %
@@ -324,13 +402,8 @@ proc obtainConfig*(config: PacmanConfig;
     raise commandError(trp("could not register '%s' database (%s)\n") %
       [aurRepo, tra"wrong or NULL argument passed"], colorNeeded = some(color))
 
-  let common = block:
-    var c = config.common
-    c.defaultRoot = c.defaultRoot and config.sysrootOption.isNone
-    c
-
   Config(
-    common: common,
+    common: config.common,
     root: root,
     db: db,
     cache: cache,
@@ -343,6 +416,10 @@ proc obtainConfig*(config: PacmanConfig;
     color: color,
     aurRepo: aurRepo,
     aurComments: OptionKey.aurComments in options,
+    checkDevel: OptionKey.checkDevel in options,
+    ignoreDevel: optionList(options, OptionKey.ignoreDevel),
+    ignoreDevelSource: optionList(options, OptionKey.ignoreDevelSource),
+    develSuffixes: develSuffixList(options),
     checkIgnored: OptionKey.checkIgnored in options,
     ignoreArch: OptionKey.ignoreArch in options,
     printAurNotFound: OptionKey.printAurNotFound in options,

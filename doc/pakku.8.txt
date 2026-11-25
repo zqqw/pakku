@@ -13,6 +13,19 @@ Description
 -----------
 Pakku is a pacman wrapper with additional features, such as AUR support.
 
+Development packages (*-git*, *-svn*, *-hg*, *-bzr*) are not compared by
+version when AUR upgrades are considered. Their last version component is a
+commit identifier, which carries no chronological order: comparing it offers
+rebuilds that a rebuild cannot satisfy, and the offer repeats on every
+system upgrade. Pakku instead offers a development package for rebuild when the
+AUR info time changed after the installed package was built or installed.
+The AUR version of such a package is informational, and the upgrade is reported
+as +rebuild+ rather than as a version change. Upstream commits that leave the
+AUR entry untouched are not detected unless +\--devel+ is enabled, which reads
+the git refs recorded for the package; without it, rebuild such a package
+
+explicitly with +pakku -S <name>+.
+
 Operations and Options
 ----------------------
 Pakku provides all operations and options from pacman. This page will focus
@@ -34,6 +47,25 @@ Sync Options (apply to '-S')[[SO]]
 	avoid downgrades being overwritten on updates. Caution, other versions may
 	not always build or function correctly without more changes: +
 	pakku -Sn less=1:581.2-1
+
+*\--devel*::
+	Check development packages for upstream changes. A development package is
+	offered for rebuild when a recorded git ref changed, instead of comparing
+	version strings that end in a commit identifier. Checking needs a devel
+	state entry written by an earlier build with this check enabled (see
+	+CheckDevel+ in linkman:pakku.conf[5]). A package without one is decided by
+	its AUR info time, and gets a state entry the next time it is built with
+	the check on. Explicit *-git* targets are listed in the AUR-upgrade phase
+	as an unnumbered sublist; they are already selected and cannot be skipped
+	there. Only git sources whose ref target changes are noticed: a new tag on
+	an unchanged ref, or a non-git source such as svn or hg, needs an explicit
+	+pakku -S <name>+.
+
+*\--nodevel*::
+	Disable development package checks for this run, overriding +CheckDevel+
+	from pakku.conf. It is the counterpart of +\--devel+ and is stripped
+	before pacman runs.
+
 
 *\--keyserver* <name>::
 	Use name as keyserver to receive keys from.

@@ -47,4 +47,11 @@ proc handleSyncClean*(args: seq[Argument], config: Config): int =
       discard rmdir(cstring(reposCacheDir))
       discard rmdir(cstring(config.userCacheCurrent))
 
+    if cleanCount >= 2:
+      # A full clean forgets saved devel state as well; entries re-form on the
+      # next build of each package. It is not a repository cache, so this does
+      # not wait for the prompt above - `-Scc` asks for a full clean either way,
+      # and its non-interactive default declines that prompt.
+      discard tryRemoveFile(config.develDbFile)
+
     0

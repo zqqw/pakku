@@ -35,6 +35,8 @@ Options
 	workspace in +TmpDir+. Supports the same variable expansion as
 	+TmpDir+ (+\fB${USER}\fP+, +\fB${HOME}\fP+, +\fB${UID}\fP+,
 	+\fB$$\fP+). Defaults to +TmpDir+ when unset or empty.
+	Variables expand once; write +\fB$$\fP+ for a literal dollar sign, so
+	+\fB$${USER}\fP+ stays the text +${USER}+.
 
 *AurRepo =* name::
 	Set the fake AUR repository name. This name should not conflict with
@@ -42,6 +44,39 @@ Options
 
 *AurComments*::
 	Download and display comments for AUR packages.
+
+*CheckDevel*::
+	Check development packages for upstream changes during AUR upgrades. A
+	development package (one named +-git+, +-svn+, +-hg+ or +-bzr+, or already
+	recorded) is offered for rebuild when its AUR info time changed after the
+	installed copy was built, and, for a recorded package, when a git ref target
+	changed. Pakku records the resolved refs in +devel.json+ under the user cache
+	directory after a successful build of a PKGBUILD that defines a +pkgver()+
+	function. A package with no state entry yet is decided by its AUR info time
+	alone, and saves state the next time it is built with this check enabled.
+	Upstream changes are only detected for git sources, and only when a recorded
+	ref target changes.
+
+*IgnoreDevel*::
+	Package names or glob patterns whose devel-specific offers are ignored.
+	An ignored package is still considered by ordinary version comparison.
+	Names are separated by whitespace or commas. A pattern matches the whole
+	name: `?` matches one character and `*` any run, including none.
+
+*IgnoreDevelSource*::
+	Git source URL glob patterns that are excluded from ref checks and from
+	saved devel state. Useful for unversioned secondary sources that would
+	otherwise make a package look stale. Separate patterns by whitespace or
+	commas, with the same whole-value wildcard rules as +IgnoreDevel+.
+
+*DevelSuffixes*::
+	Suffixes that mark a package as development for AUR info-time checks and
+	for suppressing misleading version warnings. Defaults to +git+, +svn+,
+	+hg+, +bzr+, +cvs+, +darcs+, +always+, +fossil+, +nightly+ and
+	+insiders-bin+; +always+ also matches the +-always-+ infix. Separate
+	entries by whitespace or commas, with or without a leading dash. Only
+	git sources are followed for upstream ref changes; other suffixes affect
+	classification, not tracking.
 
 *CheckIgnored*::
 	Check ignored packages for updates in AUR. Pakku will be able to warn

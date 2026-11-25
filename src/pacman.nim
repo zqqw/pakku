@@ -1,6 +1,7 @@
 import
   macros, options, posix, sequtils, sets, strutils, sugar, tables,
   args, config, utils
+from std/os import `/`
 when not declared(system.stdout): import std/syncio
 
 type
@@ -151,6 +152,8 @@ const
     $o("n", "build") + g(syncInstall),
     $(^o("keyserver")) + g(syncInstall),
     $o("noaur") + g(syncInstall),
+    $o("devel") + g(syncInstall),
+    $o("nodevel") + g(syncInstall),
     $o("z", "source") + g()
   ]
 
@@ -382,7 +385,7 @@ proc createConfigFromTable(table: Table[string, string], dbs: seq[string]): Pacm
       ignorePkgs: ignorePkgs,
       ignoreGroups: ignoreGroups,
     ),
-    sysrootOption: none(string),
+    sysroot: "",
     rootRelOption: rootRel,
     dbRelOption: dbRel,
     cacheRelOption: cacheRel,
@@ -391,20 +394,38 @@ proc createConfigFromTable(table: Table[string, string], dbs: seq[string]): Pacm
   )
 
 proc obtainPacmanConfig*(args: seq[Argument]): PacmanConfig =
-  proc getAll(pair: OptionPair): seq[string] =
-    args.filter(arg => arg.matchOption(pair)).map(arg => arg.value.get)
+  iterator getAll(args: openArray[Argument]; pair: OptionPair): Option[string] =
+    ## Yields each matching argument's value, preserving optionality.
+    for arg in args:
+      if arg.matchOption(pair):
+        yield arg.value
 
-  let sysroot = args.filter(a => a.matchOption(%%%"sysroot")).optFirst.map(a => a.value).flatten
+  proc getFirst(pair: OptionPair): Option[string] =
+    ## Returns the first matching value without allocating a sequence.
+    for value in getAll(args, pair):
+      return value
+    none(string)
 
-  let configFileRel = getAll(%%%"config").optLast.get(SysConfDir & "/pacman.conf")
-  let (configTable, wasError) = readConfigFile(configFileRel.extendRel(sysroot))
+  proc getLast(pair: OptionPair): Option[string] =
+    ## Returns the last matching value without allocating a sequence.
+    for value in getAll(args, pair):
+      result = value
+
+  let sysrootOpt = getFirst(%%%"sysroot")
+  let sysroot = sysrootOpt.get("")
+
+  let configFileRel = getLast(%%%"config").get(SysConfDir / "pacman.conf")
+  let (configTable, wasError) = readConfigFile(sysroot / configFileRel)
 
   let options = configTable.opt("options").map(t => t[]).get(initTable[string, string]())
-  let dbs = toSeq(configTable.keys).filter(k => k != "options")
+  let dbs = collect(newSeq):
+    for key in configTable.keys:
+      if key != "options":
+        key
   let defaultConfig = createConfigFromTable(options, dbs)
 
   if wasError:
-    pacmanValidateAndThrow((("sysroot", sysroot, ArgumentType.long), sysroot.isSome),
+    pacmanValidateAndThrow((("sysroot", sysrootOpt, ArgumentType.long), sysrootOpt.isSome),
       (("config", some(configFileRel), ArgumentType.long), true))
     raise haltError(1)
 
@@ -412,24 +433,25 @@ proc obtainPacmanConfig*(args: seq[Argument]): PacmanConfig =
     let colors = toSeq(enumerate[ColorMode]())
     colors.filter(c => $c == color).optLast.get(ColorMode.colorNever)
 
-  let downloadTimeout = not args.check(%%%"disable-download-timeout")
-  let rootRel = getAll(%%%"root").optLast.orElse(defaultConfig.rootRelOption)
-  let dbRel = getAll(%%%"dbpath").optLast.orElse(defaultConfig.dbRelOption)
-  let cacheRel = getAll(%%%"cachedir").optLast.orElse(defaultConfig.cacheRelOption)
-  let gpgRel = getAll(%%%"gpgdir").optLast.orElse(defaultConfig.gpgRelOption)
-  let arch = getAll(%%%"arch").optLast.get(defaultConfig.common.arch)
-  let colorStr = getAll(%%%"color").optLast.get($defaultConfig.colorMode)
-  let color = getColor(colorStr)
+  let
+    downloadTimeout = not args.check(%%%"disable-download-timeout")
+    rootRel = getLast(%%%"root").orElse(defaultConfig.rootRelOption)
+    dbRel = getLast(%%%"dbpath").orElse(defaultConfig.dbRelOption)
+    cacheRel = getLast(%%%"cachedir").orElse(defaultConfig.cacheRelOption)
+    gpgRel = getLast(%%%"gpgdir").orElse(defaultConfig.gpgRelOption)
+    arch = getLast(%%%"arch").get(defaultConfig.common.arch)
+    colorStr = getLast(%%%"color").get($defaultConfig.colorMode)
+    color = getColor(colorStr)
 
   let debug = args.check(%%%"debug")
   let progressBar = not args.check(%%%"noprogressbar")
   let ignorePkgs = collect(initHashSet):
-    for y in getAll(%%%"ignore"):
-      for x in y.split(','):
+    for value in getAll(args, %%%"ignore"):
+      for x in value.get.split(','):
         {x}
   let ignoreGroups = collect(initHashSet):
-    for y in getAll(%%%"ignoregroup"):
-      for x in y.split(','):
+    for value in getAll(args, %%%"ignoregroup"):
+      for x in value.get.split(','):
         {x}
 
   let hasKeyserver = forkWaitRedirect(() => (block:
@@ -444,13 +466,14 @@ proc obtainPacmanConfig*(args: seq[Argument]): PacmanConfig =
   let pgpKeyserver = if hasKeyserver:
       none(string)
     else: (block:
-      let argPgpKeyserver = getAll(%%%"keyserver").optLast
+      let argPgpKeyserver = getLast(%%%"keyserver")
       if argPgpKeyserver.isSome:
         argPgpKeyserver
       else:
         var pgpKeyserver = none(string)
         var file: File
-        if file.open(gpgRel.get(SysConfDir & "/pacman.d/gnupg").extendRel(sysroot) & "/gpg.conf"):
+        if file.open(sysroot /
+            (gpgRel.get(SysConfDir / "pacman.d/gnupg") / "gpg.conf")):
           try:
             while true:
               let line = file.readLine()
@@ -464,7 +487,7 @@ proc obtainPacmanConfig*(args: seq[Argument]): PacmanConfig =
 
   let defaultRootRel = defaultConfig.rootRelOption.get("/")
   let argsRootRel = rootRel.get("/")
-  let defaultRoot = defaultRootRel == argsRootRel
+  let defaultRoot = defaultRootRel == argsRootRel and sysrootOpt.isNone
 
   let common = block:
     var c = defaultConfig.common
@@ -480,7 +503,7 @@ proc obtainPacmanConfig*(args: seq[Argument]): PacmanConfig =
 
   let config: PacmanConfig = PacmanConfig(
     common: common,
-    sysrootOption: sysroot,
+    sysroot: sysroot,
     rootRelOption: rootRel,
     dbRelOption: dbRel,
     cacheRelOption: cacheRel,
@@ -488,7 +511,7 @@ proc obtainPacmanConfig*(args: seq[Argument]): PacmanConfig =
     colorMode: color,
   )
 
-  pacmanValidateAndThrow((("sysroot", sysroot, ArgumentType.long), sysroot.isSome),
+  pacmanValidateAndThrow((("sysroot", sysrootOpt, ArgumentType.long), sysrootOpt.isSome),
     (("root", some(config.pacmanRootRel), ArgumentType.long), not defaultRoot),
     (("dbpath", some(config.pacmanDbRel), ArgumentType.long), true),
     (("arch", some(config.common.arch), ArgumentType.long), true),
